@@ -71,6 +71,7 @@ export const orderRouter = (db: Db) => {
 // Demo-only back office, not UCP. ponytail: no auth (localhost demo); add real authn before exposing beyond 127.0.0.1
 export const adminRouter = (deps: { db: Db; baseUrl: string; fetch: typeof fetch }) => {
   const r = Router();
+  r.get("/orders", (_req, res) => void res.json({ orders: orders.list(deps.db) }));
   r.post("/orders/:id/ship", (req, res, next) => {
     try {
       const { status, body } = orders.ship(deps, req.params.id);

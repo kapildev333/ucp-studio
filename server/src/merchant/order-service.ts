@@ -14,6 +14,10 @@ export const find = (db: Db, id: string): Order | undefined => {
   return row && JSON.parse(row.snapshot);
 };
 
+// Newest first; rowid breaks ties between orders created in the same millisecond.
+export const list = (db: Db): Order[] =>
+  (db.prepare("SELECT snapshot FROM orders ORDER BY created_at DESC, rowid DESC LIMIT 100").all() as Row[]).map((r) => JSON.parse(r.snapshot));
+
 // Called inside Complete's transaction: stores the snapshot (and the platform's webhook_url when order was negotiated).
 export function place(ctx: Ctx, id: string, checkoutId: string, d: ReturnType<typeof derive>) {
   const method = d.fulfillment?.methods[0];

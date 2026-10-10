@@ -221,3 +221,46 @@ describe("final fixes", () => {
     expect(hooks).toEqual([]);
   });
 });
+
+describe("GET /merchant-admin/orders", () => {
+  const list = (app: any) => request(app).get("/merchant-admin/orders");
+  it("is empty before any purchase", async () => {
+    const res = await list(setup().app);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ orders: [] });
+  });
+  it("lists newest first, shows shipments, and each element equals GET /orders/:id", async () => {
+    const { app } = setup();
+    const ids = [(await buy(app)).id, (await buy(app)).id, (await buy(app)).id];
+    await ship(app, ids[1]);
+    const { orders } = (await list(app)).body;
+    expect(orders.map((o: any) => o.id)).toEqual([...ids].reverse());
+    const shipped = orders[1];
+    expect(shipped.fulfillment.events[0].type).toBe("shipped");
+    expect(shipped.line_items[0].status).toBe("fulfilled");
+    for (const o of orders) expect(o).toEqual((await request(app).get(`/orders/${o.id}`)).body);
+    expect(orders[0]).not.toHaveProperty("ucp");
+    expect(orders[0]).not.toHaveProperty("webhook_url");
+  });
+  it("caps at 100, newest first, deterministic within one millisecond", async () => {
+    const dbPath = join(mkdtempSync(join(tmpdir(), "ucp-")), "data.db");
+    const app = createApp({ dbPath, baseUrl });
+    const db = new Database(dbPath);
+    const ins = db.prepare("INSERT INTO orders VALUES (?,?,?,?,?)");
+    for (let i = 0; i < 105; i++) ins.run(`ord_${i}`, `chk_${i}`, JSON.stringify({ id: `ord_${i}` }), null, "2026-01-01T00:00:00.000Z");
+    db.close();
+    const { orders } = (await list(app)).body;
+    expect(orders).toHaveLength(100);
+    expect(orders[0].id).toBe("ord_104");
+    expect(orders[99].id).toBe("ord_5");
+  });
+  it("is unchanged by a catalog replace", async () => {
+    const { app } = setup();
+    await buy(app);
+    const before = (await list(app)).body;
+    expect(before.orders).toHaveLength(1);
+    const rep = await request(app).post("/merchant-admin/catalog/import").send({ replace: true, products: [{ title: "X", variants: [{ sku: "X", title: "V", price: 1, stock: 1 }] }] });
+    expect(rep.status).toBe(200);
+    expect((await list(app)).body).toEqual(before);
+  });
+});
