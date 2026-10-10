@@ -68,3 +68,17 @@ export function download(filename: string, content: string, type: string): void 
   a.click();
   URL.revokeObjectURL(url);
 }
+
+// Accepts { products: [...] } or a bare array; any `replace` key is ignored (the checkbox decides). Field validation is the server's job.
+export function parseCatalogImport(text: string): J[] {
+  let v: J;
+  try {
+    v = JSON.parse(text);
+  } catch (e) {
+    throw new Error(`Catalog is not valid JSON: ${(e as Error).message}`);
+  }
+  const products = Array.isArray(v) ? v : v?.products;
+  if (products === undefined) throw new Error('Expected {"products": [...]} or an array of products.');
+  if (!Array.isArray(products)) throw new Error('"products" must be an array.');
+  return products;
+}

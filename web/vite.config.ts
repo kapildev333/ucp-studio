@@ -7,6 +7,6 @@ export default defineConfig({
   server: {
     port: 5173,
     host: "127.0.0.1",
-    proxy: Object.fromEntries(["/api", "/ucp", "/.well-known", "/orders"].map((p) => [p, target])),
+    proxy: Object.fromEntries(["/api", "/ucp", "/.well-known", "/orders", "/merchant-admin"].map((p) => [p, target])),
   },
 });

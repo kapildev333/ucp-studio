@@ -117,3 +117,11 @@ pre { margin: 4px 0; padding: 10px 12px; background: #090b0f; border: 1px solid 
 .notice { font-size: 12px; margin: 4px 0 10px; }
 input[type=checkbox] { width: auto; min-height: 0; padding: 0; accent-color: var(--accent); }
 label.notice { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+
+/* v3: merchant back-office */
+textarea { font: 12px/1.45 var(--mono); color: var(--text); background: var(--raised); border: 1px solid var(--line-2); border-radius: 6px; padding: 6px 10px; width: 100%; resize: vertical; }
+.steps td.num { text-align: right; font-family: var(--mono); }
+.steps th.num { text-align: right; }
+.banner ul { margin: 0; padding-left: 18px; }
+.merchant-sec { margin-top: 24px; }
+.merchant-sec form > * + * { margin-top: 8px; }

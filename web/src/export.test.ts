@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { conformanceToMarkdown, toCurl, traceToMarkdown } from "./export";
+import { conformanceToMarkdown, parseCatalogImport, toCurl, traceToMarkdown } from "./export";
 import type { Trace } from "./api";
 
 const tr = (o: Partial<Trace> = {}): Trace => ({
@@ -72,5 +72,25 @@ describe("conformanceToMarkdown", () => {
   it("omits exchange section for steps without exchanges", () => {
     expect(md).toContain("## s1: One");
     expect(md).not.toContain("## s2: Two");
+  });
+});
+
+describe("parseCatalogImport", () => {
+  const p = [{ title: "A", variants: [] }];
+  it("accepts { products } and ignores replace", () => {
+    expect(parseCatalogImport(JSON.stringify({ replace: true, products: p }))).toEqual(p);
+  });
+  it("accepts a bare array", () => {
+    expect(parseCatalogImport(JSON.stringify(p))).toEqual(p);
+  });
+  it("rejects invalid JSON", () => {
+    expect(() => parseCatalogImport("{nope")).toThrow(/not valid JSON/);
+  });
+  it("rejects an object without products", () => {
+    expect(() => parseCatalogImport("{}")).toThrow(/products/);
+    expect(() => parseCatalogImport("null")).toThrow(/products/);
+  });
+  it("rejects products that is not an array", () => {
+    expect(() => parseCatalogImport('{"products":{}}')).toThrow(/array/);
   });
 });

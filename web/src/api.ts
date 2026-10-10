@@ -80,3 +80,17 @@ export async function runConformance(body: { url: string; transport: "rest" | "m
   if (!res.ok) throw await errorOf(res, "Conformance");
   return res.json();
 }
+
+async function merchantAdmin(send: Promise<Response>, what: string): Promise<J> {
+  let res: Response;
+  try {
+    res = await send;
+  } catch {
+    throw new Error("Cannot reach the Studio API. Is the server running on 127.0.0.1:4000?");
+  }
+  if (!res.ok) throw await errorOf(res, what);
+  return res.json();
+}
+export const getCatalog = (): Promise<J> => merchantAdmin(fetch("/merchant-admin/catalog"), "Catalog");
+export const importCatalog = (body: { replace: boolean; products: J[] }): Promise<J> => merchantAdmin(post("/merchant-admin/catalog/import", body), "Import");
+export const resetCatalog = (): Promise<J> => merchantAdmin(post("/merchant-admin/catalog/reset", {}), "Reset");
