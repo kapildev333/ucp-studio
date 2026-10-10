@@ -14,12 +14,13 @@ import { webhookRouter } from "./studio/webhooks.js";
 export function createApp({ dbPath, baseUrl, fetch = globalThis.fetch }: { dbPath: string; baseUrl: string; fetch?: typeof globalThis.fetch }) {
   const db = openDb(dbPath);
   const app = express();
+  app.use(localHostOnly); // every route: blocks DNS rebinding (see localHostOnly)
   // ponytail: one profile cache shared by REST and MCP, unbounded and never invalidated (5 min TTL on read); LRU / explicit refresh if it matters
   const deps = { db, baseUrl, fetch, cache: new Map() as ProfileCache };
   app.use(profileRouter(baseUrl));
   app.use(orderRouter(db));
-  // Both guards sit on the mount, before the body parser, so they cover every admin route including orders/:id/ship.
-  app.use("/merchant-admin", localHostOnly, crossSiteGuard, express.json({ limit: "10mb" }), merchantAdminRouter(db), adminRouter({ db, baseUrl, fetch }));
+  // The guard sits on the mount, before the body parser, so it covers every admin route including orders/:id/ship.
+  app.use("/merchant-admin", crossSiteGuard, express.json({ limit: "10mb" }), merchantAdminRouter(db), adminRouter({ db, baseUrl, fetch }));
   app.use("/ucp", mcpRouter(deps));
   app.use("/ucp", restRouter(deps));
   app.use("/api", express.json(), inspectRouter(baseUrl), proxyRouter(baseUrl), conformanceRouter(baseUrl), webhookRouter(), (_req, res) => protocolError(res, 404, "not_found", "No such Studio API route"));

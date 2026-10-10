@@ -20,7 +20,7 @@ let n = 0;
 const k = () => ({ ...AGENT, "Idempotency-Key": `int-${++n}` });
 const create = async (app: any) => (await request(app).post("/ucp/checkout-sessions").set(k()).send(full)).body;
 const get = async (app: any, id: string) => (await request(app).get(`/ucp/checkout-sessions/${id}`).set(AGENT)).body;
-const imp = (app: any, body: object) => request(app).post("/merchant-admin/catalog/import").send(body);
+const imp = (app: any, body: object) => request(app).post("/merchant-admin/catalog/import").set("X-UCP-Studio", "1").send(body);
 const mcp = async (app: any, name: string, args: object, key?: string) =>
   (await request(app).post("/ucp/mcp").send({
     jsonrpc: "2.0", id: 1, method: "tools/call",
@@ -52,7 +52,7 @@ describe("finished checkouts are frozen", () => {
     expect((await request(app).put(`/ucp/checkout-sessions/${c.id}`).set(k()).send(full)).body.code).toBe("invalid_state");
     expect((await request(app).post(`/ucp/checkout-sessions/${c.id}/complete`).set(k()).send(pay)).body.code).toBe("invalid_state");
     expect((await request(app).post(`/ucp/checkout-sessions/${c.id}/cancel`).set(k())).body.code).toBe("invalid_state");
-    await request(app).post("/merchant-admin/catalog/reset");
+    await request(app).post("/merchant-admin/catalog/reset").set("X-UCP-Studio", "1");
     expect(await mcp(app, "get_checkout", { id: c.id })).toEqual(done);
   });
   it("canceled: survives upsert and replace:true on both transports; re-cancel replays the frozen body", async () => {
@@ -143,13 +143,13 @@ describe("oversized JSON bodies", () => {
 });
 
 describe("ship is behind the back-office cross-site guard", () => {
-  it("rejects cross-site without shipping; allows same-origin and header-less", async () => {
+  it("rejects cross-site without shipping; allows same-origin", async () => {
     const app = mk();
     const order = async () => {
       const c = await create(app);
       return (await request(app).post(`/ucp/checkout-sessions/${c.id}/complete`).set(k()).send(pay)).body.order.id as string;
     };
-    const ship = (id: string) => request(app).post(`/merchant-admin/orders/${id}/ship`);
+    const ship = (id: string) => request(app).post(`/merchant-admin/orders/${id}/ship`).set("X-UCP-Studio", "1");
     const [a, b] = [await order(), await order()];
     const bad = await ship(a).set("Sec-Fetch-Site", "cross-site");
     expect([bad.status, bad.body.code]).toEqual([403, "forbidden"]);
@@ -170,9 +170,9 @@ describe("/merchant-admin Host check", () => {
     const res = [
       await request(app).get("/merchant-admin/orders").set("Host", host),
       await request(app).get("/merchant-admin/catalog").set("Host", host),
-      await request(app).post("/merchant-admin/catalog/reset").set("Host", host),
-      await request(app).post("/merchant-admin/catalog/import").set("Host", host).send(other),
-      await request(app).post(`/merchant-admin/orders/${id}/ship`).set("Host", host),
+      await request(app).post("/merchant-admin/catalog/reset").set("X-UCP-Studio", "1").set("Host", host),
+      await request(app).post("/merchant-admin/catalog/import").set("X-UCP-Studio", "1").set("Host", host).send(other),
+      await request(app).post(`/merchant-admin/orders/${id}/ship`).set("X-UCP-Studio", "1").set("Host", host),
     ];
     expect(res.map((r) => [r.status, r.body.code])).toEqual(res.map(() => [403, "forbidden_host"]));
     expect((await request(app).get("/merchant-admin/catalog")).body).toEqual(before);
@@ -221,7 +221,7 @@ describe("order created_at", () => {
     const listed = (await request(app).get("/merchant-admin/orders")).body.orders[0];
     expect(ucp).toMatch(rfc);
     expect([plain, listed.created_at]).toEqual([ucp, ucp]);
-    const shipped = await request(app).post(`/merchant-admin/orders/${id}/ship`);
+    const shipped = await request(app).post(`/merchant-admin/orders/${id}/ship`).set("X-UCP-Studio", "1");
     expect(shipped.body.created_at).toBe(ucp);
     expect((await request(app).get(`/ucp/orders/${id}`).set(AGENT)).body.created_at).toBe(ucp);
     expect((await request(app).get("/merchant-admin/orders")).body.orders[0]).toEqual((await request(app).get(`/orders/${id}`)).body);

@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { checkoutBody, money, orderSummary, restEndpoint, safeHttpUrl, sameOrigin, stepOf } from "./api";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { importCatalog, resetCatalog, shipOrder, checkoutBody, money, orderSummary, safeHttpUrl, sameOrigin, stepOf } from "./api";
 
 const addr = { street_address: "1 Main St", address_locality: "Austin", address_region: "TX", postal_code: "78701", address_country: "US" };
 const buyer = { first_name: "", last_name: "", email: "", phone_number: "" };
@@ -11,11 +11,17 @@ describe("money", () => {
   });
 });
 
-describe("restEndpoint", () => {
-  it("finds the first rest endpoint across services", () => {
-    const p = { ucp: { services: { a: [{ transport: "mcp", endpoint: "x" }], b: [{ transport: "rest", endpoint: "http://h/ucp" }] } } };
-    expect(restEndpoint(p)).toBe("http://h/ucp");
-    expect(restEndpoint({ ucp: {} })).toBeUndefined();
+describe("back-office writes", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it("all carry X-UCP-Studio (the server rejects writes without it)", async () => {
+    const f = vi.fn(async () => new Response("{}"));
+    vi.stubGlobal("fetch", f);
+    await importCatalog({ replace: false, products: [] });
+    await resetCatalog();
+    await shipOrder("ord_1");
+    expect(f.mock.calls.map((c: any) => [c[0], c[1].headers["X-UCP-Studio"]])).toEqual([
+      ["/merchant-admin/catalog/import", "1"], ["/merchant-admin/catalog/reset", "1"], ["/merchant-admin/orders/ord_1/ship", "1"],
+    ]);
   });
 });
 

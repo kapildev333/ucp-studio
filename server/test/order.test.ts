@@ -43,7 +43,7 @@ async function buy(app: any, lines = [{ item: { id: "var_4_1" }, quantity: 2 }],
     .send({ payment: { instruments: [{ id: "i1", handler_id: "mock_pay", type: "card", credential: { token: "tok_ok" } }] } });
   return { checkout: c.body, done: done.body, id: done.body.order?.id as string };
 }
-const ship = (app: any, id: string) => request(app).post(`/merchant-admin/orders/${id}/ship`);
+const ship = (app: any, id: string) => request(app).post(`/merchant-admin/orders/${id}/ship`).set("X-UCP-Studio", "1");
 afterEach(() => vi.useRealTimers());
 
 describe("order snapshot", () => {
@@ -261,7 +261,7 @@ describe("GET /merchant-admin/orders", () => {
     await buy(app);
     const before = (await list(app)).body;
     expect(before.orders).toHaveLength(1);
-    const rep = await request(app).post("/merchant-admin/catalog/import").send({ replace: true, products: [{ title: "X", variants: [{ sku: "X", title: "V", price: 1, stock: 1 }] }] });
+    const rep = await request(app).post("/merchant-admin/catalog/import").set("X-UCP-Studio", "1").send({ replace: true, products: [{ title: "X", variants: [{ sku: "X", title: "V", price: 1, stock: 1 }] }] });
     expect(rep.status).toBe(200);
     expect((await list(app)).body).toEqual(before);
   });

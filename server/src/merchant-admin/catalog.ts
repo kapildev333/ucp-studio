@@ -29,9 +29,14 @@ const importBody = z.object({ replace: z.boolean().default(false), products: z.a
 
 const slug = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
-// ponytail: header-based CSRF check only (browsers always send Sec-Fetch-Site; cross-site and same-site writes are blocked); real auth is out of scope
+// Writes need the custom header only the web console sends: a hostile page cannot add it without a (failing) CORS preflight, and the
+// server's own outbound fetches (inspect, conformance, proxy, webhooks) never send it, so a hostile merchant profile cannot aim them here.
+// Sec-Fetch-Site additionally refuses cross-site and same-site browser writes. ponytail: real auth is out of scope.
 export const crossSiteGuard: RequestHandler = (req, res, next) =>
-  req.method !== "GET" && ["cross-site", "same-site"].includes(req.header("Sec-Fetch-Site") ?? "") ? protocolError(res, 403, "forbidden", "Cross-site requests are not allowed") : next();
+  req.method === "GET" ? next()
+  : req.header("X-UCP-Studio") !== "1" || ["cross-site", "same-site"].includes(req.header("Sec-Fetch-Site") ?? "")
+    ? protocolError(res, 403, "forbidden", "Back-office writes need the X-UCP-Studio header from the Studio web app")
+    : next();
 
 // ponytail: no auth, localhost demo only; add real auth before exposing this beyond the developer's machine
 export const merchantAdminRouter = (db: Db) => {

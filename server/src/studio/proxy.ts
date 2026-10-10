@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
 import { protocolError, UCP_VERSION } from "../ucp.js";
-import { localHostOnly } from "./inspect.js";
 
 const schema = z.object({
   method: z.enum(["GET", "POST", "PUT"]),
@@ -19,7 +18,6 @@ const schema = z.object({
 
 export const proxyRouter = (baseUrl: string) => {
   const r = Router();
-  r.use(localHostOnly);
   const cap = [{ version: UCP_VERSION }];
   r.get("/agent-profile", (_req, res) => {
     res.json({
@@ -43,7 +41,8 @@ export const proxyRouter = (baseUrl: string) => {
       };
       // Header names compare case-insensitively; the caller's spelling and value win.
       const merged = new Map(Object.entries(defaults).map(([k, v]) => [k.toLowerCase(), [k, v] as const]));
-      for (const [k, v] of Object.entries(headers ?? {})) merged.set(k.toLowerCase(), [k, v]);
+      // X-UCP-Studio is the back-office write credential: never forwarded, whoever supplies it.
+      for (const [k, v] of Object.entries(headers ?? {})) if (k.toLowerCase() !== "x-ucp-studio") merged.set(k.toLowerCase(), [k, v]);
       const sent = Object.fromEntries(merged.values());
       const payload = method === "GET" || body === undefined ? undefined : JSON.stringify(body);
       const t0 = performance.now();

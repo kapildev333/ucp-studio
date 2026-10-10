@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { checkoutBody, connect as connectMerchant, editQty, mergeCaps, money, openSession, stepOf, type Address, type Buyer, type Connection, type J, type Op, type Session, type Step, type Trace as T, type Transport } from "./api";
+import { safeHttpUrl, checkoutBody, connect as connectMerchant, editQty, mergeCaps, money, openSession, stepOf, type Address, type Buyer, type Connection, type J, type Op, type Session, type Step, type Trace as T, type Transport } from "./api";
 import { OrderPanel } from "./OrderPanel";
 import { Trace } from "./Trace";
 
@@ -277,7 +277,7 @@ export function AgentConsole() {
               <div className="banner ok confirm">
                 <b>Order placed</b>
                 <span className="mono">{checkout.order.id}</span>
-                <a href={checkout.order.permalink_url} target="_blank" rel="noreferrer">{checkout.order.permalink_url}</a>
+                {safeHttpUrl(checkout.order.permalink_url) ? <a href={safeHttpUrl(checkout.order.permalink_url)} target="_blank" rel="noreferrer">{checkout.order.permalink_url}</a> : <span className="mono">{String(checkout.order.permalink_url ?? "")}</span>}
               </div>
             )}
             {status === "completed" && checkout.order?.id && session && <OrderPanel key={`${session.transport}:${checkout.order.id}`} session={session} orderId={checkout.order.id} merchantUrl={connectedUrl} onResult={seen} />}

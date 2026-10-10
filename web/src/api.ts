@@ -8,11 +8,6 @@ export type Address = { street_address: string; address_locality: string; addres
 const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 export const money = (minor: number) => usd.format(minor / 100);
 
-export const restEndpoint = (profile: J): string | undefined =>
-  Object.values(profile?.ucp?.services ?? {})
-    .flatMap((v) => (Array.isArray(v) ? v : []))
-    .find((e: J) => e?.transport === "rest" && typeof e.endpoint === "string")?.endpoint;
-
 // Which wizard step a checkout message (by JSON path) belongs next to.
 export function stepOf(path?: string): Step {
   if (!path) return "pay";
@@ -32,8 +27,10 @@ export function checkoutBody(cart: { id: string; qty: number }[], buyer: Buyer, 
   return body;
 }
 
-const post = (path: string, body: unknown) =>
-  fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>
+  fetch(path, { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(body) });
+// Back-office writes carry a header the server's own outbound fetches never send (see crossSiteGuard).
+const backOffice = (path: string, body: unknown) => post(path, body, { "X-UCP-Studio": "1" });
 
 async function errorOf(res: Response, what: string): Promise<Error> {
   const d = await res.json().catch(() => null);
@@ -216,10 +213,12 @@ export const safeHttpUrl = (u: unknown): string | undefined => (typeof u === "st
 export const runConformance = (body: { url: string; transport: "rest" | "mcp"; allow_complete: boolean }): Promise<J> => request(post("/api/conformance", body), "Conformance");
 
 export const getCatalog = (): Promise<J> => request(fetch("/merchant-admin/catalog"), "Catalog");
-export const importCatalog = (body: { replace: boolean; products: J[] }): Promise<J> => request(post("/merchant-admin/catalog/import", body), "Import");
-export const resetCatalog = (): Promise<J> => request(post("/merchant-admin/catalog/reset", {}), "Reset");
+export const importCatalog = (body: { replace: boolean; products: J[] }): Promise<J> => request(backOffice("/merchant-admin/catalog/import", body), "Import");
+export const resetCatalog = (): Promise<J> => request(backOffice("/merchant-admin/catalog/reset", {}), "Reset");
 export const getOrders = (): Promise<J> => request(fetch("/merchant-admin/orders"), "Orders");
-export const shipOrder = (id: string): Promise<J> => request(post(`/merchant-admin/orders/${enc(id)}/ship`, {}), "Ship");
+export const shipOrder = (id: string): Promise<J> => request(backOffice(`/merchant-admin/orders/${enc(id)}/ship`, {}), "Ship");
+export const getWebhooks = (): Promise<J> => request(fetch("/api/webhooks/orders"), "Webhook polling");
+export const clearWebhooks = (): Promise<J> => request(fetch("/api/webhooks/orders", { method: "DELETE" }), "Clear");
 
 // Pure: "unfulfilled" | "partial" | "fulfilled" from an order's line items (tolerates missing fields).
 export function fulfillmentStatus(o: J): "unfulfilled" | "partial" | "fulfilled" {

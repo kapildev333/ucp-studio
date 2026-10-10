@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { money, orderSummary, safeHttpUrl, sameOrigin, type J, type Session } from "./api";
+import { clearWebhooks, getWebhooks, money, orderSummary, safeHttpUrl, sameOrigin, shipOrder, type J, type Session } from "./api";
 
 type Hook = { received_at: string; headers?: Record<string, string>; body: J };
 const arr = (x: J): J[] => (Array.isArray(x) ? x : []);
@@ -38,11 +38,7 @@ export function OrderPanel({ session, orderId, merchantUrl, onResult }: { sessio
     setBusy(true);
     setError("");
     try {
-      const r = await fetch(`/merchant-admin/orders/${encodeURIComponent(orderId)}/ship`, { method: "POST" });
-      if (!r.ok) {
-        const b = await r.json().catch(() => null);
-        throw new Error(b?.code ? `${b.code} ${b.content ?? ""}`.trim() : `Ship failed: HTTP ${r.status}`);
-      }
+      await shipOrder(orderId);
     } catch (e) {
       if (mounted.current) {
         setError((e as Error).message);
@@ -59,9 +55,7 @@ export function OrderPanel({ session, orderId, merchantUrl, onResult }: { sessio
     let timer: ReturnType<typeof setInterval> | undefined;
     const poll = async () => {
       try {
-        const r = await fetch("/api/webhooks/orders");
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        const d = await r.json();
+        const d = await getWebhooks();
         if (live) {
           setHooks(arr(d?.events));
           setHookErr("");
@@ -89,8 +83,7 @@ export function OrderPanel({ session, orderId, merchantUrl, onResult }: { sessio
 
   async function clear() {
     try {
-      const r = await fetch("/api/webhooks/orders", { method: "DELETE" });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      await clearWebhooks();
       setHooks([]);
       setHookErr("");
     } catch (e) {

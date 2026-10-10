@@ -126,7 +126,6 @@ export async function checkLiveMcp(p: Obj): Promise<Check | undefined> {
 
 export const inspectRouter = (baseUrl: string) => {
   const r = Router();
-  r.use(localHostOnly);
   r.post("/inspect", async (req, res, next) => {
     try {
       const url = z.object({ url: z.string() }).parse(req.body).url;
