@@ -4,6 +4,7 @@ import type { Db } from "../db.js";
 import { protocolError } from "../ucp.js";
 import * as catalog from "./catalog-service.js";
 import * as checkout from "./checkout-service.js";
+import * as orders from "./order-service.js";
 import { ProtocolError, type Ctx, type Result } from "./errors.js";
 import { negotiate, type ProfileCache } from "./negotiate.js";
 
@@ -49,6 +50,7 @@ export const restRouter = (deps: { db: Db; baseUrl: string; fetch: typeof fetch 
   r.put("/checkout-sessions/:id", op((c, q) => checkout.update(c, q.params.id, q.body), true));
   r.post("/checkout-sessions/:id/complete", op((c, q) => checkout.complete(c, q.params.id, q.body), true));
   r.post("/checkout-sessions/:id/cancel", op((c, q) => checkout.cancel(c, q.params.id), true));
+  r.get("/orders/:id", op((c, q) => orders.get(c, q.params.id)));
   r.use((_req, res) => protocolError(res, 404, "not_found", "No such UCP endpoint"));
   return r;
 };
@@ -57,11 +59,26 @@ export const restRouter = (deps: { db: Db; baseUrl: string; fetch: typeof fetch 
 export const orderRouter = (db: Db) => {
   const r = Router();
   r.get("/orders/:id", (req, res) => {
-    const order = db.prepare("SELECT * FROM orders WHERE id = ?").get(req.params.id);
+    const order = orders.find(db, req.params.id);
     if (!order) return protocolError(res, 404, "not_found", "Order not found");
     res.json(order);
   });
+  r.get("/track/:number", (req, res) => void res.type("text/plain").send(`Tracking ${req.params.number}: shipped with MockShip (placeholder).\n`));
   r.get("/terms", (_req, res) => void res.type("text/plain").send("UCP Studio demo terms of service: placeholder.\n"));
   r.get("/privacy", (_req, res) => void res.type("text/plain").send("UCP Studio demo privacy policy: placeholder.\n"));
+  return r;
+};
+
+// Demo-only back office, not UCP. ponytail: no auth (localhost demo); add real authn before exposing beyond 127.0.0.1
+export const adminRouter = (deps: { db: Db; baseUrl: string; fetch: typeof fetch }) => {
+  const r = Router();
+  r.post("/orders/:id/ship", (req, res, next) => {
+    try {
+      const { status, body } = orders.ship(deps, req.params.id);
+      res.status(status).json(body);
+    } catch (e) {
+      fail(res, next, e);
+    }
+  });
   return r;
 };

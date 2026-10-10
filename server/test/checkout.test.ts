@@ -94,8 +94,8 @@ describe("checkout happy path", () => {
 
     const order = await request(app).get(`/orders/${done.body.order.id}`);
     expect(order.status).toBe(200);
-    expect(order.body).toMatchObject({ id: done.body.order.id, checkout_id: c.id, total: 4818, currency: "USD" });
-    expect(order.body.created_at).toBeTruthy();
+    expect(order.body).toMatchObject({ id: done.body.order.id, checkout_id: c.id, currency: "USD" });
+    expect(order.body.totals.at(-1).amount).toBe(4818);
   });
   it("update is full replacement", async () => {
     const c = await create();

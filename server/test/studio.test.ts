@@ -63,7 +63,7 @@ describe("studio API end to end", () => {
 
   it("serves the agent profile", async () => {
     const res = await request(app).get("/api/agent-profile");
-    expect(Object.keys(res.body.ucp.capabilities)).toHaveLength(4);
+    expect(Object.keys(res.body.ucp.capabilities)).toHaveLength(5);
   });
 
   it("inspects the built-in merchant: no failures", async () => {
@@ -138,5 +138,38 @@ describe("studio API end to end", () => {
       expect(res.status).toBe(400);
       expect(res.body.code).toBe("invalid_request");
     }
+  });
+});
+
+describe("webhook receiver and agent profile", () => {
+  const app = createApp({ dbPath: ":memory:", baseUrl: "http://127.0.0.1:4000" });
+  it("advertises the order capability with webhook_url", async () => {
+    const res = await request(app).get("/api/agent-profile");
+    expect(res.body.ucp.capabilities["dev.ucp.shopping.order"]).toEqual([
+      { version: "2026-08-25", config: { webhook_url: "http://127.0.0.1:4000/api/webhooks/orders" } },
+    ]);
+  });
+  it("stores, lists newest first, caps at 200, and clears", async () => {
+    expect((await request(app).get("/api/webhooks/orders")).body).toEqual({ events: [] });
+    const hook = (b: object) => request(app).post("/api/webhooks/orders").set({ "Webhook-Id": "evt_1", "Webhook-Timestamp": "1", "UCP-Agent": 'profile="x"', "X-Other": "no" }).send(b);
+    expect((await hook({ n: 1 })).status).toBe(204);
+    await hook({ n: 2 });
+    const { events } = (await request(app).get("/api/webhooks/orders")).body;
+    expect(events.map((e: any) => e.body.n)).toEqual([2, 1]);
+    expect(events[0].headers).toEqual({ "webhook-id": "evt_1", "webhook-timestamp": "1", "ucp-agent": 'profile="x"' });
+    expect(Date.parse(events[0].received_at)).not.toBeNaN();
+    for (let i = 0; i < 205; i++) await hook({ n: 100 + i });
+    const capped = (await request(app).get("/api/webhooks/orders")).body.events;
+    expect(capped).toHaveLength(200);
+    expect(capped[0].body.n).toBe(304);
+    expect((await request(app).delete("/api/webhooks/orders")).status).toBe(204);
+    expect((await request(app).get("/api/webhooks/orders")).body.events).toEqual([]);
+  });
+  it("rejects non-object bodies", async () => {
+    for (const b of ["[1]", '"s"', "null"]) {
+      const res = await request(app).post("/api/webhooks/orders").set("Content-Type", "application/json").send(b);
+      expect(res.status, b).toBe(400);
+    }
+    expect((await request(app).post("/api/webhooks/orders").set("Content-Type", "application/json").send("{bad")).status).toBe(400);
   });
 });

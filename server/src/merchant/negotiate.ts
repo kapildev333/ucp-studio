@@ -14,6 +14,7 @@ export const BUSINESS_CAPS: Record<string, Entry[]> = {
   "dev.ucp.shopping.catalog.search": [v],
   "dev.ucp.shopping.catalog.lookup": [v],
   "dev.ucp.shopping.fulfillment": [{ ...v, extends: "dev.ucp.shopping.checkout" }],
+  "dev.ucp.shopping.order": [v],
 };
 
 const TTL_MS = 5 * 60 * 1000;

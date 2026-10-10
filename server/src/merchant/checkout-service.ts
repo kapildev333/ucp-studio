@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { ProtocolError, type Ctx, type Result } from "./errors.js";
 import { envelopeFor, has, incompatible } from "./negotiate.js";
+import { notify, place } from "./order-service.js";
 import { derive, unknownItems, type CheckoutRequest, type Message, type Variant } from "./checkout-logic.js";
 
 const CHECKOUT = "dev.ucp.shopping.checkout";
@@ -124,9 +125,10 @@ export const complete = (ctx: Ctx, id: string, input: unknown): Result =>
     const orderId = `ord_${randomUUID()}`;
     ctx.db.transaction(() => {
       for (const l of request.line_items) ctx.db.prepare("UPDATE variants SET stock = stock - ? WHERE id = ?").run(l.quantity, l.item.id);
-      ctx.db.prepare("INSERT INTO orders VALUES (?,?,?,?,?)").run(orderId, id, d.totals.at(-1)!.amount, "USD", new Date().toISOString());
+      place(ctx, orderId, id, d);
       ctx.db.prepare("UPDATE checkouts SET order_id = ?, status = 'completed' WHERE id = ?").run(orderId, id);
     })();
+    notify(ctx, orderId);
     return ok(view(ctx, find(ctx, id)!));
   });
 

@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 
 export type Db = Database.Database;
 
+// orders.snapshot is the order object as JSON (immutable except fulfillment); webhook_url is captured from the platform profile at Complete.
 // Checkout request state is stored as JSON; totals and messages are derived on read. `status` is the snapshot taken at the last write (Complete gates on it).
 // ponytail: no migrations (CREATE IF NOT EXISTS only); delete server/data.db after any schema change
 const SCHEMA = `
@@ -17,7 +18,7 @@ CREATE TABLE IF NOT EXISTS checkouts (
 CREATE TABLE IF NOT EXISTS idempotency (
   key TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, status INTEGER NOT NULL, body TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS orders (
-  id TEXT PRIMARY KEY, checkout_id TEXT NOT NULL, total INTEGER NOT NULL, currency TEXT NOT NULL, created_at TEXT NOT NULL);
+  id TEXT PRIMARY KEY, checkout_id TEXT NOT NULL, snapshot TEXT NOT NULL, webhook_url TEXT, created_at TEXT NOT NULL);
 `;
 
 // [handle, title, description, category, [variant title, price cents, [option name, label], stock][]]

@@ -14,7 +14,7 @@ describe("discovery", () => {
     expect(res.body.ucp.version).toBe("2026-08-25");
     expect(res.body.ucp.services["dev.ucp.shopping"][0]).toEqual({ version: "2026-08-25", transport: "rest", endpoint: `${baseUrl}/ucp` });
     expect(Object.keys(res.body.ucp.capabilities)).toEqual([
-      "dev.ucp.shopping.checkout", "dev.ucp.shopping.catalog.search", "dev.ucp.shopping.catalog.lookup", "dev.ucp.shopping.fulfillment",
+      "dev.ucp.shopping.checkout", "dev.ucp.shopping.catalog.search", "dev.ucp.shopping.catalog.lookup", "dev.ucp.shopping.fulfillment", "dev.ucp.shopping.order",
     ]);
     expect(res.body.ucp.capabilities["dev.ucp.shopping.fulfillment"][0].extends).toBe("dev.ucp.shopping.checkout");
     expect(res.body.ucp.payment_handlers["dev.ucpstudio.mock_pay"][0].id).toBe("mock_pay");
