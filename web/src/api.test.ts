@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkoutBody, money, restEndpoint, stepOf } from "./api";
+import { checkoutBody, money, orderSummary, restEndpoint, sameOrigin, stepOf } from "./api";
 
 const addr = { street_address: "1 Main St", address_locality: "Austin", address_region: "TX", postal_code: "78701", address_country: "US" };
 const buyer = { first_name: "", last_name: "", email: "", phone_number: "" };
@@ -117,5 +117,29 @@ describe("parseResponse", () => {
   it("returns a checkout that carries messages and an id", () => {
     const b = { id: "c1", ucp: { status: "error" }, messages: [{ code: "x", content: "y" }] };
     expect(parseResponse("rest", { status: 200, body: b })).toBe(b);
+  });
+});
+
+describe("orderSummary", () => {
+  const line = (f: number, t: number, status = "processing") => ({ quantity: { fulfilled: f, total: t }, status });
+  it("sums quantities and shows the last fulfillment event type", () => {
+    const o = { id: "ord_1", line_items: [line(1, 1, "fulfilled"), line(1, 1, "fulfilled")], fulfillment: { events: [{ type: "processing" }, { type: "shipped" }] } };
+    expect(orderSummary(o)).toBe("ord_1 · 2/2 fulfilled · shipped");
+  });
+  it("falls back to the first line status without events", () => {
+    expect(orderSummary({ id: "ord_2", line_items: [line(0, 3)], fulfillment: { events: [] } })).toBe("ord_2 · 0/3 fulfilled · processing");
+  });
+  it("survives missing fields", () => {
+    expect(orderSummary({})).toBe("? · 0/0 fulfilled · processing");
+    expect(orderSummary(null)).toBe("? · 0/0 fulfilled · processing");
+  });
+});
+
+describe("sameOrigin", () => {
+  it("compares origins and rejects invalid urls", () => {
+    expect(sameOrigin("http://127.0.0.1:5173/", "http://127.0.0.1:5173")).toBe(true);
+    expect(sameOrigin("http://127.0.0.1:5173/x/y", "http://127.0.0.1:5173")).toBe(true);
+    expect(sameOrigin("http://127.0.0.1:4000", "http://127.0.0.1:5173")).toBe(false);
+    expect(sameOrigin("nope", "http://127.0.0.1:5173")).toBe(false);
   });
 });

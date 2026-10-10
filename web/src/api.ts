@@ -168,3 +168,21 @@ export async function openSession(onTrace: (t: Trace) => void, conn: Connection,
     },
   };
 }
+
+// ---- v2 order panel helpers ----
+// Pure: "ord_1 · 2/2 fulfilled · shipped" from an order (or webhook body); tolerant of missing fields.
+export function orderSummary(o: J): string {
+  const lines: J[] = Array.isArray(o?.line_items) ? o.line_items : [];
+  const n = (k: string) => lines.reduce((s, l) => s + (Number(l?.quantity?.[k]) || 0), 0);
+  const events: J[] = Array.isArray(o?.fulfillment?.events) ? o.fulfillment.events : [];
+  return `${o?.id ?? "?"} · ${n("fulfilled")}/${n("total")} fulfilled · ${events.at(-1)?.type ?? lines[0]?.status ?? "processing"}`;
+}
+
+// Pure: true when merchantUrl parses and has the same origin as `origin`.
+export function sameOrigin(merchantUrl: string, origin: string): boolean {
+  try {
+    return new URL(merchantUrl).origin === origin;
+  } catch {
+    return false;
+  }
+}

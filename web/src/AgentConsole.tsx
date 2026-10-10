@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { checkoutBody, connect as connectMerchant, money, openSession, stepOf, type Address, type Buyer, type Connection, type J, type Op, type Session, type Step, type Trace as T, type Transport } from "./api";
+import { OrderPanel } from "./OrderPanel";
 import { Trace } from "./Trace";
 
 type Line = { id: string; title: string; price: number; qty: number };
@@ -17,6 +18,7 @@ const EMPTY_ADDR: Address = { street_address: "", address_locality: "", address_
 
 export function AgentConsole() {
   const [url, setUrl] = useState(window.location.origin);
+  const [connectedUrl, setConnectedUrl] = useState(""); // the URL actually connected to, not the edited input
   const [conn, setConn] = useState<Connection | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [caps, setCaps] = useState<{ name: string; version: string }[]>([]);
@@ -81,6 +83,7 @@ export function AgentConsole() {
       const first = offered(c)[0];
       if (!first) throw new Error("This profile offers no REST or MCP endpoint.");
       setConn(c);
+      setConnectedUrl(url);
       await begin(c, first);
     });
   };
@@ -277,6 +280,7 @@ export function AgentConsole() {
                 <a href={checkout.order.permalink_url} target="_blank" rel="noreferrer">{checkout.order.permalink_url}</a>
               </div>
             )}
+            {status === "completed" && checkout.order?.id && session && <OrderPanel key={`${session.transport}:${checkout.order.id}`} session={session} orderId={checkout.order.id} merchantUrl={connectedUrl} onResult={seen} />}
             {status === "canceled" && <div className="banner warn">Checkout canceled.</div>}
             {!open && <button onClick={reset}>New session</button>}
           </>
