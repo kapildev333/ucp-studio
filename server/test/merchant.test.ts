@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
 import request from "supertest";
 import { createApp } from "../src/app.js";
+import { AGENT, fakeFetch } from "./helpers.js";
 
 const baseUrl = "http://127.0.0.1:4000";
-const AGENT = { "UCP-Agent": 'profile="http://127.0.0.1:4000/api/agent-profile"' };
-const app = createApp({ dbPath: ":memory:", baseUrl });
+const app = createApp({ dbPath: ":memory:", baseUrl, fetch: fakeFetch() });
 const search = (body: object = {}) => request(app).post("/ucp/catalog/search").set(AGENT).send(body);
 
 describe("discovery", () => {
@@ -14,7 +14,7 @@ describe("discovery", () => {
     expect(res.body.ucp.version).toBe("2026-08-25");
     expect(res.body.ucp.services["dev.ucp.shopping"][0]).toEqual({ version: "2026-08-25", transport: "rest", endpoint: `${baseUrl}/ucp` });
     expect(Object.keys(res.body.ucp.capabilities)).toEqual([
-      "dev.ucp.shopping.checkout", "dev.ucp.shopping.catalog.search", "dev.ucp.shopping.catalog.lookup", "dev.ucp.shopping.fulfillment",
+      "dev.ucp.shopping.checkout", "dev.ucp.shopping.catalog.search", "dev.ucp.shopping.catalog.lookup", "dev.ucp.shopping.fulfillment", "dev.ucp.shopping.order",
     ]);
     expect(res.body.ucp.capabilities["dev.ucp.shopping.fulfillment"][0].extends).toBe("dev.ucp.shopping.checkout");
     expect(res.body.ucp.payment_handlers["dev.ucpstudio.mock_pay"][0].id).toBe("mock_pay");

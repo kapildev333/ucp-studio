@@ -2,8 +2,9 @@ import { describe, it, expect } from "vitest";
 import request from "supertest";
 import { createApp } from "../src/app.js";
 
-const AGENT = { "UCP-Agent": 'profile="http://127.0.0.1:4000/api/agent-profile"' };
-const mk = () => createApp({ dbPath: ":memory:", baseUrl: "http://127.0.0.1:4000" });
+import { AGENT, fakeFetch } from "./helpers.js";
+
+const mk = () => createApp({ dbPath: ":memory:", baseUrl: "http://127.0.0.1:4000", fetch: fakeFetch() });
 const catalog = async (app: any) => (await request(app).get("/merchant-admin/catalog")).body;
 const imp = (app: any, body: any) => request(app).post("/merchant-admin/catalog/import").send(body);
 const v = (sku: string, extra: object = {}) => ({ sku, title: "V", price: 100, stock: 3, ...extra });

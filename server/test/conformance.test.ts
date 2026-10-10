@@ -92,11 +92,12 @@ describe("conformance over REST", () => {
     expect(typeof create.exchanges[0].duration_ms).toBe("number");
   });
 
-  it("built-in merchant, allow_complete: purchase passes, order and cancel skip", async () => {
+  // v2 merged: the built-in merchant now offers dev.ucp.shopping.order, so get_order runs instead of skipping.
+  it("built-in merchant, allow_complete: purchase and order pass, cancel skips", async () => {
     const res = await run({ url: s.base, allow_complete: true });
     expect(res.status).toBe(200);
-    expect(statuses(res.body)).toMatchObject({ complete_purchase: "pass", get_order: "skip", cancel_checkout: "skip", create_checkout: "pass" });
-    expect(res.body.summary).toEqual({ pass: 12, fail: 0, warn: 0, skip: 2 });
+    expect(statuses(res.body)).toMatchObject({ complete_purchase: "pass", get_order: "pass", cancel_checkout: "skip", create_checkout: "pass" });
+    expect(res.body.summary).toEqual({ pass: 13, fail: 0, warn: 0, skip: 1 });
   });
 
   it("honours item_id", async () => {
