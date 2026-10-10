@@ -81,6 +81,13 @@ describe("catalog import", () => {
     expect(res.body.content).toContain(path);
   });
 
+  it("accepts a 500-product import larger than 100kb", async () => {
+    const products = Array.from({ length: 500 }, (_, i) => prod(`P${i}`, [v(`S${i}`)], { description: "d".repeat(500) }));
+    const res = await imp(mk(), { products });
+    expect(res.status).toBe(200);
+    expect(res.body.imported).toEqual({ products: 500, variants: 500 });
+  });
+
   it("is atomic: a bad late row writes nothing", async () => {
     const app = mk();
     const before = await catalog(app);
