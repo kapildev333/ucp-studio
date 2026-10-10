@@ -141,3 +141,21 @@ describe("oversized JSON bodies", () => {
     });
   });
 });
+
+describe("ship is behind the back-office cross-site guard", () => {
+  it("rejects cross-site without shipping; allows same-origin and header-less", async () => {
+    const app = mk();
+    const order = async () => {
+      const c = await create(app);
+      return (await request(app).post(`/ucp/checkout-sessions/${c.id}/complete`).set(k()).send(pay)).body.order.id as string;
+    };
+    const ship = (id: string) => request(app).post(`/merchant-admin/orders/${id}/ship`);
+    const [a, b] = [await order(), await order()];
+    const bad = await ship(a).set("Sec-Fetch-Site", "cross-site");
+    expect([bad.status, bad.body.code]).toEqual([403, "forbidden"]);
+    expect((await request(app).get(`/orders/${a}`)).body.fulfillment.events).toEqual([]);
+    expect((await ship(a).set("Sec-Fetch-Site", "same-origin")).status).toBe(200);
+    expect((await ship(b)).status).toBe(200);
+    expect((await ship(b)).status).toBe(409); // exactly one ship route: the second call sees the first one's write
+  });
+});

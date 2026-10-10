@@ -18,8 +18,8 @@ export function createApp({ dbPath, baseUrl, fetch = globalThis.fetch }: { dbPat
   const deps = { db, baseUrl, fetch, cache: new Map() as ProfileCache };
   app.use(profileRouter(baseUrl));
   app.use(orderRouter(db));
-  app.use("/merchant-admin", adminRouter({ db, baseUrl, fetch }));
-  app.use("/merchant-admin", express.json({ limit: "10mb" }), merchantAdminRouter(db));
+  // adminRouter (orders/:id/ship) sits after merchantAdminRouter so that router's cross-site guard covers it too.
+  app.use("/merchant-admin", express.json({ limit: "10mb" }), merchantAdminRouter(db), adminRouter({ db, baseUrl, fetch }));
   app.use("/ucp", mcpRouter(deps));
   app.use("/ucp", restRouter(deps));
   app.use("/api", express.json(), inspectRouter(baseUrl), proxyRouter(baseUrl), conformanceRouter(baseUrl), webhookRouter());
