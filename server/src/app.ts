@@ -5,6 +5,7 @@ import { profileRouter } from "./merchant/profile.js";
 import { catalogRouter } from "./merchant/catalog.js";
 import { inspectRouter } from "./studio/inspect.js";
 import { proxyRouter } from "./studio/proxy.js";
+import { conformanceRouter } from "./studio/conformance.js";
 import { checkoutRouter, orderRouter } from "./merchant/checkout.js";
 
 export function createApp({ dbPath, baseUrl }: { dbPath: string; baseUrl: string }) {
@@ -19,7 +20,7 @@ export function createApp({ dbPath, baseUrl }: { dbPath: string; baseUrl: string
   ucp.use("/checkout-sessions", checkoutRouter(db, baseUrl));
   ucp.use((_req, res) => protocolError(res, 404, "not_found", "No such UCP endpoint"));
   app.use("/ucp", ucp);
-  app.use("/api", express.json(), inspectRouter(baseUrl), proxyRouter(baseUrl));
+  app.use("/api", express.json(), inspectRouter(baseUrl), proxyRouter(baseUrl), conformanceRouter(baseUrl));
   app.use(errorHandler);
   return app;
 }
