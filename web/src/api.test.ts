@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkoutBody, money, orderSummary, restEndpoint, sameOrigin, stepOf } from "./api";
+import { checkoutBody, money, orderSummary, restEndpoint, safeHttpUrl, sameOrigin, stepOf } from "./api";
 
 const addr = { street_address: "1 Main St", address_locality: "Austin", address_region: "TX", postal_code: "78701", address_country: "US" };
 const buyer = { first_name: "", last_name: "", email: "", phone_number: "" };
@@ -101,6 +101,15 @@ describe("parseResponse", () => {
     const e = fails(() => rpc({ error: { code: -32602, message: "bad" } }));
     expect([e.code, e.message]).toEqual(["-32602", "-32602 bad"]);
   });
+  it("JSON-RPC error body with HTTP 400 keeps data.code", () => {
+    const e = fails(() => rpc({ error: { code: -32602, message: "bad", data: { code: "invalid" } } }, 400));
+    expect([e.code, e.status]).toEqual(["invalid", 400]);
+  });
+  it("joins every message of an id-less error body", () => {
+    const b = { ucp: { status: "error" }, messages: [{ code: "a", content: "x" }, { code: "b", content: "y" }] };
+    const e = fails(() => parseResponse("rest", { status: 200, body: b }));
+    expect([e.code, e.message]).toEqual(["a", "a x; b y"]);
+  });
   it("MCP non-200 throws; missing structuredContent throws", () => {
     expect(fails(() => rpc({}, 500))).toBeInstanceOf(UcpError);
     expect(fails(() => rpc({ result: {} })).message).toMatch(/structuredContent/);
@@ -141,5 +150,14 @@ describe("sameOrigin", () => {
     expect(sameOrigin("http://127.0.0.1:5173/x/y", "http://127.0.0.1:5173")).toBe(true);
     expect(sameOrigin("http://127.0.0.1:4000", "http://127.0.0.1:5173")).toBe(false);
     expect(sameOrigin("nope", "http://127.0.0.1:5173")).toBe(false);
+  });
+});
+
+describe("safeHttpUrl", () => {
+  it("allows only http(s)", () => {
+    expect(safeHttpUrl("https://x/y")).toBe("https://x/y");
+    expect(safeHttpUrl("HTTP://x")).toBe("HTTP://x");
+    expect(safeHttpUrl("javascript:alert(1)")).toBeUndefined();
+    expect(safeHttpUrl(5)).toBeUndefined();
   });
 });

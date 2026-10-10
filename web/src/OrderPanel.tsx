@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { money, orderSummary, sameOrigin, type J, type Session } from "./api";
+import { money, orderSummary, safeHttpUrl, sameOrigin, type J, type Session } from "./api";
 
 type Hook = { received_at: string; headers?: Record<string, string>; body: J };
 const arr = (x: J): J[] => (Array.isArray(x) ? x : []);
@@ -11,6 +11,11 @@ export function OrderPanel({ session, orderId, merchantUrl, onResult }: { sessio
   const [hooks, setHooks] = useState<Hook[]>([]);
   const [hookErr, setHookErr] = useState("");
 
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => void (mounted.current = false);
+  }, []);
   const report = useRef(onResult);
   report.current = onResult; // latest callback without re-running load/effects on every parent render
   const load = useCallback(async () => {
@@ -18,15 +23,15 @@ export function OrderPanel({ session, orderId, merchantUrl, onResult }: { sessio
     setError("");
     try {
       const b = await session.ucp("get_order", { id: orderId });
+      if (!mounted.current) return;
       setOrder(b);
       report.current(b);
     } catch (e) {
-      setError((e as Error).message);
+      if (mounted.current) setError((e as Error).message);
     } finally {
-      setBusy(false);
+      if (mounted.current) setBusy(false);
     }
   }, [session, orderId]);
-  // ponytail: a late get_order after unmount only sets state on an unmounted component (a no-op in React 18).
   useEffect(() => void load(), [load]);
 
   async function ship() {
@@ -39,8 +44,10 @@ export function OrderPanel({ session, orderId, merchantUrl, onResult }: { sessio
         throw new Error(b?.code ? `${b.code} ${b.content ?? ""}`.trim() : `Ship failed: HTTP ${r.status}`);
       }
     } catch (e) {
-      setError((e as Error).message);
-      setBusy(false);
+      if (mounted.current) {
+        setError((e as Error).message);
+        setBusy(false);
+      }
       return;
     }
     await load();
@@ -96,13 +103,18 @@ export function OrderPanel({ session, orderId, merchantUrl, onResult }: { sessio
   const totals = arr(order?.totals);
   const done = lines.length > 0 && lines.every((l) => l?.status === "fulfilled");
   const mine = hooks.filter((h) => h?.body?.id === orderId);
+  // Refetch the order when a new matching webhook arrives (keyed on the newest event so it cannot loop).
+  const newest = mine[0]?.headers?.["webhook-id"];
+  useEffect(() => {
+    if (newest) void load();
+  }, [newest, load]);
 
   return (
     <section className="step order-panel" aria-labelledby="order-h">
       <h2 id="order-h">Order <span className="mono">{orderId}</span></h2>
       {error && <div className="banner error" role="alert">{error}</div>}
       <div className="row">
-        {order?.permalink_url && <a href={order.permalink_url} target="_blank" rel="noreferrer">Permalink</a>}
+        {safeHttpUrl(order?.permalink_url) && <a href={safeHttpUrl(order.permalink_url)} target="_blank" rel="noreferrer">Permalink</a>}
         <span className="grow" />
         <button onClick={() => void load()} disabled={busy}>Refresh</button>
         {sameOrigin(merchantUrl, window.location.origin) && <button className="primary" onClick={() => void ship()} disabled={busy || done}>Simulate shipment</button>}
@@ -111,7 +123,7 @@ export function OrderPanel({ session, orderId, merchantUrl, onResult }: { sessio
       {order && (
         <>
           <h3>Line items</h3>
-          <table className="olines">
+          <table>
             <thead><tr><th>Item</th><th className="right">Fulfilled / total</th><th>Status</th></tr></thead>
             <tbody>
               {lines.map((l, i) => (
@@ -131,7 +143,7 @@ export function OrderPanel({ session, orderId, merchantUrl, onResult }: { sessio
               <li key={e?.id ?? i}>
                 <b>{e?.type ?? "event"}</b> <span className="muted small">{e?.occurred_at ? new Date(e.occurred_at).toLocaleString() : ""}</span>
                 <div className="small">
-                  {e?.tracking_number && (e?.tracking_url ? <a className="mono" href={e.tracking_url} target="_blank" rel="noreferrer">{e.tracking_number}</a> : <span className="mono">{e.tracking_number}</span>)}
+                  {e?.tracking_number && (safeHttpUrl(e?.tracking_url) ? <a className="mono" href={safeHttpUrl(e.tracking_url)} target="_blank" rel="noreferrer">{e.tracking_number}</a> : <span className="mono">{e.tracking_number}</span>)}
                   {e?.carrier && <> · {e.carrier}</>}
                   {e?.description && <> · <span className="muted">{e.description}</span></>}
                 </div>
@@ -150,13 +162,13 @@ export function OrderPanel({ session, orderId, merchantUrl, onResult }: { sessio
 
       <div className="row hooks-head">
         <h3 className="grow">Webhooks received</h3>
-        <button onClick={() => void clear()}>Clear</button>
+        <button onClick={() => void clear()} aria-label="Clear all received webhooks">Clear all</button>
       </div>
       {hookErr && <p className="muted small" role="status">{hookErr}</p>}
       {!mine.length && <p className="muted small">No webhooks received yet.</p>}
       <ul className="hooks">
-        {mine.map((h, i) => (
-          <li key={h.headers?.["webhook-id"] ?? i}>
+        {mine.map((h) => (
+          <li key={`${h.headers?.["webhook-id"]}:${h.received_at}`}>
             <details>
               <summary>
                 <span className="mono small">{new Date(h.received_at).toLocaleTimeString()}</span> <span className="mono small muted">{h.headers?.["webhook-id"]}</span> <span className="mono">{orderSummary(h.body)}</span>

@@ -112,6 +112,17 @@ export function opRequest(transport: Transport, endpoint: string, op: Op, args: 
   }
 }
 
+// ponytail: this client only speaks to stateless JSON-response MCP servers (no SSE, no Mcp-Session-Id, no notifications/initialized).
+// Pure: the JSON-RPC error (checked first, so a 4xx keeps its data.code) or non-200 status as a UcpError, else undefined.
+function rpcFailure(r: { status: number; body: J }): UcpError | undefined {
+  const e = r.body?.error;
+  if (e) {
+    const code = e.data?.code ?? String(e.code);
+    return new UcpError(`${code} ${e.message}`, code, r.status);
+  }
+  if (r.status !== 200) return new UcpError(`MCP endpoint returned HTTP ${r.status}`, undefined, r.status);
+}
+
 // Pure: proxy response -> UCP body, or throws UcpError.
 export function parseResponse(transport: Transport, r: { status: number; body: J }): J {
   const b = r.body;
@@ -119,17 +130,14 @@ export function parseResponse(transport: Transport, r: { status: number; body: J
   if (transport === "rest") {
     if (r.status >= 400) throw new UcpError(`${r.status} ${b?.code ?? ""} ${b?.content ?? ""}`.trim(), b?.code, r.status);
   } else {
-    if (r.status !== 200) throw new UcpError(`MCP endpoint returned HTTP ${r.status}`, undefined, r.status);
-    if (b?.error) {
-      const code = b.error.data?.code ?? String(b.error.code);
-      throw new UcpError(`${code} ${b.error.message}`, code);
-    }
+    const f = rpcFailure(r);
+    if (f) throw f;
     out = b?.result?.structuredContent;
     if (!out) throw new UcpError("MCP result has no structuredContent");
   }
   if (out?.ucp?.status === "error" && !out.id) {
-    const m = out.messages?.[0];
-    throw new UcpError(`${m?.code ?? "error"} ${m?.content ?? ""}`.trim(), m?.code);
+    const ms: J[] = Array.isArray(out.messages) ? out.messages : [];
+    throw new UcpError(ms.map((m) => `${m?.code ?? "error"} ${m?.content ?? ""}`.trim()).join("; ") || "error", ms[0]?.code);
   }
   return out;
 }
@@ -143,11 +151,12 @@ export async function connect(onTrace: (t: Trace) => void, merchantUrl: string):
   const r = await call((t) => { echoed = t.request?.headers; onTrace(t); }, "GET", `${merchantUrl.replace(/\/+$/, "")}/.well-known/ucp`);
   if (r.status >= 400) throw new UcpError(`${r.status} ${r.body?.code ?? ""} ${r.body?.content ?? ""}`.trim(), r.body?.code, r.status);
   const h = Object.entries(echoed ?? {}).find(([k]) => k.toLowerCase() === "ucp-agent")?.[1];
+  // ponytail: the origin fallback only resolves while the dev server runs; point UCP-Agent at a public profile otherwise.
   const agentProfile = /profile="([^"]*)"/.exec(String(h ?? ""))?.[1] ?? `${window.location.origin}/api/agent-profile`;
   return { endpoints: endpointsOf(r.body), agentProfile };
 }
 
-let rpcSeq = 0;
+let rpcSeq = 0; // ponytail: module-level counter shared by all sessions; ids only need to be unique per page load.
 // Opens a session on one transport; MCP sends a single initialize first.
 export async function openSession(onTrace: (t: Trace) => void, conn: Connection, transport: Transport): Promise<Session> {
   const endpoint = conn.endpoints[transport];
@@ -157,13 +166,14 @@ export async function openSession(onTrace: (t: Trace) => void, conn: Connection,
       jsonrpc: "2.0", id: ++rpcSeq, method: "initialize",
       params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "ucp-studio-console", version: "0.2.0" } },
     });
-    if (r.status !== 200 || r.body?.error || !r.body?.result?.protocolVersion)
-      throw new UcpError(r.body?.error ? `${r.body.error.data?.code ?? r.body.error.code} ${r.body.error.message}` : "MCP initialize failed: no protocolVersion in result", r.body?.error?.data?.code ?? (r.body?.error ? String(r.body.error.code) : undefined), r.status);
+    const f = rpcFailure(r);
+    if (f) throw f;
+    if (!r.body?.result?.protocolVersion) throw new UcpError("MCP initialize failed: no protocolVersion in result", undefined, r.status);
   }
   return {
     transport,
     ucp: async (op, args) => {
-      const q = opRequest(transport, endpoint, op, args, { rpcId: ++rpcSeq, idempotencyKey: crypto.randomUUID(), agentProfile: conn.agentProfile });
+      const q = opRequest(transport, endpoint, op, args, { rpcId: ++rpcSeq, idempotencyKey: crypto.randomUUID() /* ponytail: fresh key per call, so the UI cannot retry idempotently */, agentProfile: conn.agentProfile });
       return parseResponse(transport, await call(onTrace, q.method, q.url, q.body));
     },
   };
@@ -186,3 +196,6 @@ export function sameOrigin(merchantUrl: string, origin: string): boolean {
     return false;
   }
 }
+
+// Pure: the url when it is http(s), else undefined (blocks javascript: and friends in merchant-supplied hrefs).
+export const safeHttpUrl = (u: unknown): string | undefined => (typeof u === "string" && /^https?:\/\//i.test(u) ? u : undefined);
