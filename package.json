@@ -1,0 +1,11 @@
+{
+  "name": "ucp-studio",
+  "private": true,
+  "workspaces": ["server", "web"],
+  "scripts": {
+    "dev": "concurrently -n server,web \"npm run dev -w server\" \"npm run dev -w web --if-present\"",
+    "test": "npm test --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present"
+  },
+  "devDependencies": { "concurrently": "^9.0.0" }
+}
