@@ -1,8 +1,46 @@
+<div align="center">
+
 # UCP Studio
 
-A free, localhost-only developer toolkit for the [Universal Commerce Protocol](https://ucp.dev) (UCP, version `2026-08-25`):
-a reference merchant (REST and MCP, SQLite), a studio API (profile inspector, tracing proxy, conformance runner, webhook receiver),
-a merchant back-office API, and a web console with four tabs that drives all of it.
+**A local developer toolkit for the [Universal Commerce Protocol](https://ucp.dev).**
+Inspect any merchant, drive a purchase over REST or MCP, run conformance, and read every byte on the wire.
+
+[![ci](https://github.com/kapildev333/ucp-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/kapildev333/ucp-studio/actions/workflows/ci.yml)
+![UCP 2026-08-25](https://img.shields.io/badge/UCP-2026--08--25-6c7bff)
+![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6?logo=typescript&logoColor=white)
+![React](https://img.shields.io/badge/React-Vite-61dafb?logo=react&logoColor=black)
+![SQLite](https://img.shields.io/badge/SQLite-embedded-003b57?logo=sqlite&logoColor=white)
+![localhost only](https://img.shields.io/badge/runs-localhost%20only-555)
+
+<img src="docs/screens/agent-console.png" alt="Agent Console: a guided purchase with a live wire trace" width="900">
+
+</div>
+
+## What it is
+
+UCP is the protocol AI agents use to shop at merchants. UCP Studio is everything you need to build or test a merchant on your own machine, with no accounts and no network:
+
+| Tab | What it does |
+|---|---|
+| **Inspector** | Fetches a merchant's `/.well-known/ucp` and runs a pass/warn/fail checklist: version, services, payment handlers, capabilities, REST endpoint, transport security, keys, live catalog search, live MCP. |
+| **Agent Console** | A guided purchase (connect, search, cart, checkout, buyer, shipping, pay) over REST **or** MCP, with a wire trace of every call. Copy any call as curl, download the trace as JSON or Markdown. |
+| **Conformance** | A scripted checkout against any merchant, each step asserted against the UCP spec, with the wire exchanges. Downloads as a Markdown report. |
+| **Merchant** | Back-office for the built-in reference merchant: catalog table, JSON import, orders, one-click ship with webhooks. |
+
+The **built-in merchant** speaks both REST and MCP (JSON-RPC 2.0), persists to SQLite, and implements discovery, catalog search, checkout sessions with idempotency keys, stock, tax, shipping options, orders, webhooks and a mock payment handler. Point the Inspector at `http://127.0.0.1:4000` and watch it pass.
+
+<details>
+<summary><b>More screenshots</b></summary>
+
+| Inspector | Conformance |
+|---|---|
+| ![Inspector](docs/screens/inspector.png) | ![Conformance](docs/screens/conformance.png) |
+
+| Merchant back-office |
+|---|
+| ![Merchant](docs/screens/merchant.png) |
+
+</details>
 
 ## Quick start
 
@@ -26,7 +64,7 @@ Open http://127.0.0.1:5173. The web app relies on the Vite proxy, so it only wor
 
 The SQLite database is `server/data.db` (created on first run, git-ignored).
 
-## Features
+## Features in detail
 
 - **Inspector** - point it at any merchant origin; it fetches `/.well-known/ucp` and runs a checklist (version, services, payment handlers, capabilities, REST endpoint, transport security, keys, live catalog search, live MCP check) with pass/warn/fail results and the raw profile.
 - **Agent Console** - a guided purchase (connect, search, cart, checkout, buyer and address, shipping, pay) over REST or MCP, with a switch between them when the profile offers both. Every call lands in a wire trace: MCP rows show the JSON-RPC method and tool, each entry has Copy as curl, and the trace downloads as JSON or Markdown. The chips show the union of capabilities negotiated so far in the session. After a purchase an Order panel shows the order, fulfillment events and webhooks received. Works against any UCP merchant that can reach `BASE_URL/api/agent-profile` (the profile it fetches to negotiate), which in practice means merchants on this machine; a `BASE_URL` on a tunnel hostname is refused by the `Host` allowlist.
