@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { OrdersTable } from "./Merchant";
+import { OrdersTable, shipThenReload } from "./Merchant";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { editQty, fulfillmentStatus, mergeCaps, normalize, parseResponse } from "./api";
 import { conformanceToMarkdown, rpcLabel, toCurl, traceToMarkdown } from "./export";
@@ -112,5 +112,17 @@ describe("MCP exchanges", () => {
     expect(md).toContain("(tools/call update_checkout) → no response");
     expect(md).not.toContain("→ 0 ");
     expect(md).toContain("## Skipped\n\n- agent_header: REST only: not run over MCP");
+  });
+});
+
+describe("shipThenReload", () => {
+  it("reloads after a failed ship and still returns the error for display afterwards", async () => {
+    const calls: string[] = [];
+    const err = await shipThenReload("ord_a", async () => { calls.push("ship"); throw new Error("Order is already fulfilled"); }, async () => { calls.push("reload"); });
+    expect(calls).toEqual(["ship", "reload"]);
+    expect(err).toBe("Ship ord_a: Order is already fulfilled");
+  });
+  it("returns no error after a successful ship", async () => {
+    expect(await shipThenReload("ord_a", async () => ({}), async () => {})).toBe("");
   });
 });

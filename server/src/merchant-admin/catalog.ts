@@ -29,7 +29,7 @@ const importBody = z.object({ replace: z.boolean().default(false), products: z.a
 
 const slug = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
-// ponytail: header-based CSRF check only (browsers always send Sec-Fetch-Site); real auth is out of scope
+// ponytail: header-based CSRF check only (browsers always send Sec-Fetch-Site; cross-site and same-site writes are blocked); real auth is out of scope
 export const crossSiteGuard: RequestHandler = (req, res, next) =>
   req.method !== "GET" && ["cross-site", "same-site"].includes(req.header("Sec-Fetch-Site") ?? "") ? protocolError(res, 403, "forbidden", "Cross-site requests are not allowed") : next();
 

@@ -6,6 +6,18 @@ const counts = (r: J) => `${r.imported.products} products, ${r.imported.variants
 
 const totalOf = (o: J) => (Array.isArray(o.totals) ? o.totals : []).find((t: J) => t?.type === "total")?.amount;
 
+// Ships, then always reloads the list; returns the error text (409 invalid_state, 403) to show once the reload is done, or "".
+export async function shipThenReload(id: string, ship: (id: string) => Promise<unknown>, reload: () => Promise<void>): Promise<string> {
+  let err = "";
+  try {
+    await ship(id);
+  } catch (e) {
+    err = `Ship ${id}: ${(e as Error).message}`;
+  }
+  await reload();
+  return err;
+}
+
 export function OrdersTable({ orders, busyId, onShip }: { orders: J[]; busyId?: string; onShip: (id: string) => void }) {
   return (
     <table className="steps">
@@ -55,15 +67,9 @@ export function Merchant() {
   }
   async function ship(id: string) {
     setShipping(id);
-    try {
-      await shipOrder(id);
-      await loadOrders();
-    } catch (e) {
-      setOrderError(`Ship ${id}: ${(e as Error).message}`); // 409 invalid_state, 403 forbidden
-      await loadOrders();
-    } finally {
-      setShipping("");
-    }
+    const err = await shipThenReload(id, shipOrder, loadOrders);
+    if (err) setOrderError(err); // after the reload, which clears the error banner
+    setShipping("");
   }
 
   async function load() {
