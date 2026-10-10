@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { call, checkoutBody, money, restEndpoint, stepOf, type Address, type Buyer, type J, type Step, type Trace as T } from "./api";
+import { checkoutBody, connect as connectMerchant, money, openSession, stepOf, type Address, type Buyer, type Connection, type J, type Op, type Session, type Step, type Trace as T, type Transport } from "./api";
 import { Trace } from "./Trace";
 
 type Line = { id: string; title: string; price: number; qty: number };
@@ -17,7 +17,9 @@ const EMPTY_ADDR: Address = { street_address: "", address_locality: "", address_
 
 export function AgentConsole() {
   const [url, setUrl] = useState(window.location.origin);
-  const [endpoint, setEndpoint] = useState("");
+  const [conn, setConn] = useState<Connection | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
+  const [caps, setCaps] = useState<{ name: string; version: string }[]>([]);
   const [query, setQuery] = useState("");
   const [products, setProducts] = useState<J[] | null>(null);
   const [picks, setPicks] = useState<Record<string, string>>({});
@@ -36,34 +38,56 @@ export function AgentConsole() {
   const open = !!checkout && status !== "completed" && status !== "canceled";
   const group = checkout?.fulfillment?.methods?.[0]?.groups?.[0];
 
-  // Runs one merchant call; HTTP errors and failures land in the banner, never a blank screen.
-  async function run(method: "GET" | "POST" | "PUT", path: string, body?: unknown, onOk?: (b: J) => void) {
+  // Runs one async step; any failure (UcpError, JSON-RPC error, proxy failure) lands in the banner, never a blank screen.
+  async function run(fn: () => Promise<void>) {
     setBusy(true);
     setError("");
     try {
-      const r = await call(onTrace, method, path.startsWith("http") ? path : `${endpoint}${path}`, body);
-      if (r.status >= 400) setError(`${r.status} ${r.body?.code ?? ""} ${r.body?.content ?? ""}`.trim());
-      else onOk?.(r.body);
+      await fn();
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setBusy(false);
     }
   }
+  const seen = (b: J) => b?.ucp && setCaps(Array.isArray(b.ucp.capabilities) ? b.ucp.capabilities : []);
+  const found = (b: J) => setProducts((Array.isArray(b.products) ? b.products : []).filter((p: J) => p && typeof p === "object").map(safeProduct));
+  // One UCP operation on the active session; transport details live in api.ts.
+  const ucp = (op: Op, args: J, onOk: (b: J) => void) =>
+    run(async () => {
+      const b = await session!.ucp(op, args);
+      seen(b);
+      onOk(b);
+    });
+  const search = (q: string) => ucp("search_catalog", { query: q || undefined, pagination: { limit: 20 } }, found);
 
-  const search = (q: string, ep = endpoint) =>
-    run("POST", `${ep}/catalog/search`, { query: q || undefined, pagination: { limit: 20 } }, (b) => setProducts((Array.isArray(b.products) ? b.products : []).filter((p: J) => p && typeof p === "object").map(safeProduct)));
+  // Opens a session on transport t and loads the empty catalog.
+  async function begin(c: Connection, t: Transport) {
+    const s = await openSession(onTrace, c, t);
+    setSession(s);
+    const b = await s.ucp("search_catalog", { pagination: { limit: 20 } });
+    seen(b);
+    found(b);
+  }
+  const offered = (c: Connection | null) => (["rest", "mcp"] as Transport[]).filter((t) => c?.endpoints[t]);
 
   const connect = () => {
     reset();
-    setEndpoint("");
+    setConn(null);
+    setSession(null);
     setProducts(null);
-    run("GET", `${url.replace(/\/$/, "")}/.well-known/ucp`, undefined, (profile) => {
-      const ep = restEndpoint(profile);
-      if (!ep) return setError("This profile offers no REST endpoint.");
-      setEndpoint(ep.replace(/\/+$/, ""));
-      search("", ep.replace(/\/+$/, ""));
+    run(async () => {
+      const c = await connectMerchant(onTrace, url);
+      const first = offered(c)[0];
+      if (!first) throw new Error("This profile offers no REST or MCP endpoint.");
+      setConn(c);
+      await begin(c, first);
     });
+  };
+  const switchTransport = (t: Transport) => {
+    reset();
+    setProducts(null);
+    run(() => begin(conn!, t));
   };
 
   const applyCheckout = (b: J) => {
@@ -71,11 +95,11 @@ export function AgentConsole() {
     if (b.id) setCheckout({ ...b, totals: Array.isArray(b.totals) ? b.totals : [] });
   };
   const body = (opt?: string, withAddress = true) => checkoutBody(cart, buyer, addr, opt, withAddress);
-  const start = () => run("POST", "/checkout-sessions", body(undefined, false), applyCheckout);
-  const update = (opt = group?.selected_option_id) => run("PUT", `/checkout-sessions/${checkout.id}`, body(opt), applyCheckout);
+  const start = () => ucp("create_checkout", { checkout: body(undefined, false) }, applyCheckout);
+  const update = (opt = group?.selected_option_id) => ucp("update_checkout", { id: checkout.id, checkout: body(opt) }, applyCheckout);
   const pay = () =>
-    run("POST", `/checkout-sessions/${checkout.id}/complete`, { payment: { instruments: [{ id: "instr_1", handler_id: "mock_pay", type: "token", credential: { token } }] } }, applyCheckout);
-  const cancel = () => run("POST", `/checkout-sessions/${checkout.id}/cancel`, {}, applyCheckout);
+    ucp("complete_checkout", { id: checkout.id, checkout: { payment: { instruments: [{ id: "instr_1", handler_id: "mock_pay", type: "token", credential: { token } }] } } }, applyCheckout);
+  const cancel = () => ucp("cancel_checkout", { id: checkout.id }, applyCheckout);
   const reset = () => {
     setCheckout(null);
     setMsgs([]);
@@ -83,6 +107,7 @@ export function AgentConsole() {
     setBuyer(EMPTY_BUYER);
     setAddr(EMPTY_ADDR);
     setError("");
+    setCaps([]);
   };
 
   function add(p: J) {
@@ -128,10 +153,27 @@ export function AgentConsole() {
             <label className="grow"><span className="sr">Merchant URL</span><input className="mono" value={url} onChange={(e) => setUrl(e.target.value)} spellCheck={false} /></label>
             <button className="primary" disabled={!url.trim()}>Connect</button>
           </form>
-          <p className="muted small mono">{endpoint ? `REST endpoint ${endpoint}` : "Reads /.well-known/ucp through the proxy to find the REST endpoint."}</p>
+          {conn && session && (
+            <fieldset className="transport">
+              <legend>Transport</legend>
+              {offered(conn).map((t) => (
+                <label key={t} className="opt">
+                  <input type="radio" name="transport" checked={session.transport === t} onChange={() => switchTransport(t)} />
+                  <span>{t.toUpperCase()}</span>
+                </label>
+              ))}
+            </fieldset>
+          )}
+          <p className="muted small mono">{session && conn ? `${session.transport.toUpperCase()} endpoint ${conn.endpoints[session.transport]}` : "Reads /.well-known/ucp through the proxy to find the REST or MCP endpoint."}</p>
+          {session && (
+            <div className="chips">
+              <span className="small muted">Negotiated capabilities</span>
+              {caps.length ? caps.map((c) => <span key={c.name} className="chip mono">{c.name} <span className="muted">{c.version}</span></span>) : <span className="small muted">none</span>}
+            </div>
+          )}
         </fieldset>
 
-        <fieldset className="step" disabled={busy || !endpoint}>
+        <fieldset className="step" disabled={busy || !session}>
           <legend><i>2</i> Catalog</legend>
           <form className="row" onSubmit={(e) => { e.preventDefault(); search(query); }}>
             <label className="grow"><span className="sr">Search products</span><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search products…" /></label>
@@ -161,7 +203,7 @@ export function AgentConsole() {
           </div>
         </fieldset>
 
-        <fieldset className="step" disabled={busy || !endpoint}>
+        <fieldset className="step" disabled={busy || !session}>
           <legend><i>3</i> Cart</legend>
           {!cart.length && <div className="empty">Add a product to start.</div>}
           {cart.map((l) => (
