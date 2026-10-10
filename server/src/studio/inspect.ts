@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type RequestHandler } from "express";
 import { z } from "zod";
 import { protocolError, UCP_VERSION } from "../ucp.js";
 
@@ -20,7 +20,13 @@ const mk = (id: string, title: string, status: Check["status"], detail: string):
 // All service entries (any service name) offering the rest transport.
 const restEntries = (p: Obj): Obj[] =>
   Object.values(ucpOf(p).services ?? {}).flatMap((v) => (Array.isArray(v) ? v : [])).filter((e) => isObj(e) && e.transport === "rest");
-export const restEndpoint = (p: Obj): string | undefined => restEntries(p).find((e) => isHttpUrl(e.endpoint))?.endpoint;
+// Trailing slashes are stripped once here so callers can append "/path" safely.
+export const restEndpoint = (p: Obj): string | undefined => restEntries(p).find((e) => isHttpUrl(e.endpoint))?.endpoint.replace(/\/+$/, "");
+
+// Blocks DNS rebinding: a page that rebinds its hostname to 127.0.0.1 would otherwise reach the open forwarder same-origin.
+// ponytail: hostname allowlist only; binding to a non-loopback address or a custom local hostname needs this list extended.
+export const localHostOnly: RequestHandler = (req, res, next) =>
+  ["127.0.0.1", "localhost", "[::1]", "::1"].includes(req.hostname) ? next() : protocolError(res, 403, "forbidden_host", "Studio API only answers on localhost");
 
 export const checkVersion = (p: Obj): Check => {
   const v = ucpOf(p).version;
@@ -101,6 +107,7 @@ export async function checkLiveCatalog(p: Obj, baseUrl: string): Promise<Check |
 
 export const inspectRouter = (baseUrl: string) => {
   const r = Router();
+  r.use(localHostOnly);
   r.post("/inspect", async (req, res, next) => {
     try {
       const url = z.object({ url: z.string() }).parse(req.body).url;
