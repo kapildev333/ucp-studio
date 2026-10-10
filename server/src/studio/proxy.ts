@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
 import { protocolError, UCP_VERSION } from "../ucp.js";
+import { localHostOnly } from "./inspect.js";
 
 const schema = z.object({
   method: z.enum(["GET", "POST", "PUT"]),
@@ -18,6 +19,7 @@ const schema = z.object({
 
 export const proxyRouter = (baseUrl: string) => {
   const r = Router();
+  r.use(localHostOnly);
   const cap = [{ version: UCP_VERSION }];
   r.get("/agent-profile", (_req, res) => {
     res.json({

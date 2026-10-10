@@ -61,6 +61,19 @@ describe("studio API end to end", () => {
   });
   afterAll(() => new Promise((r) => server.close(r)));
 
+  it("rejects non-local Host headers (DNS rebinding) on every studio route", async () => {
+    for (const host of ["evil.example", "evil.example:4000"]) {
+      const a = await request(app).get("/api/agent-profile").set("Host", host);
+      expect(a.status).toBe(403);
+      expect(a.body.code).toBe("forbidden_host");
+      expect((await request(app).post("/api/inspect").set("Host", host).send({ url: base })).status).toBe(403);
+      expect((await request(app).post("/api/proxy").set("Host", host).send({ method: "GET", url: `${base}/terms` })).status).toBe(403);
+    }
+    for (const host of ["localhost:4000", "127.0.0.1", "[::1]:4000"]) {
+      expect((await request(app).get("/api/agent-profile").set("Host", host)).status).toBe(200);
+    }
+  });
+
   it("serves the agent profile", async () => {
     const res = await request(app).get("/api/agent-profile");
     expect(Object.keys(res.body.ucp.capabilities)).toHaveLength(5);
