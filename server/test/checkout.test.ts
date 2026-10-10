@@ -1,10 +1,10 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import request from "supertest";
 import { createApp } from "../src/app.js";
+import { AGENT, CAPS, fakeFetch, profileOf } from "./helpers.js";
 
 const baseUrl = "http://127.0.0.1:4000";
-const AGENT = { "UCP-Agent": 'profile="http://127.0.0.1:4000/api/agent-profile"' };
-const app = createApp({ dbPath: ":memory:", baseUrl });
+const app = createApp({ dbPath: ":memory:", baseUrl, fetch: fakeFetch() });
 const BASE = "/ucp/checkout-sessions";
 let n = 0;
 const key = () => `k-${++n}`;
@@ -94,8 +94,8 @@ describe("checkout happy path", () => {
 
     const order = await request(app).get(`/orders/${done.body.order.id}`);
     expect(order.status).toBe(200);
-    expect(order.body).toMatchObject({ id: done.body.order.id, checkout_id: c.id, total: 4818, currency: "USD" });
-    expect(order.body.created_at).toBeTruthy();
+    expect(order.body).toMatchObject({ id: done.body.order.id, checkout_id: c.id, currency: "USD" });
+    expect(order.body.totals.at(-1).amount).toBe(4818);
   });
   it("update is full replacement", async () => {
     const c = await create();
@@ -311,5 +311,21 @@ describe("static pages", () => {
       expect(res.status).toBe(200);
       expect(res.headers["content-type"]).toContain("text/plain");
     }
+  });
+});
+
+describe("complete under a different negotiation", () => {
+  it("F2: a checkout stored incomplete by a fulfillment platform completes for one without", async () => {
+    const A = "http://a.test/p", B = "http://b.test/p";
+    const f = (async (url: string | URL | Request) =>
+      new Response(JSON.stringify(profileOf(String(url) === A ? CAPS : CAPS.filter((c) => !c.endsWith("fulfillment")))))) as typeof fetch;
+    const app2 = createApp({ dbPath: ":memory:", baseUrl, fetch: f });
+    const as = (u: string, k: string) => ({ "UCP-Agent": `profile="${u}"`, "Idempotency-Key": k });
+    const c = await request(app2).post(BASE).set(as(A, "a1")).send({ line_items: [{ item: { id: "var_4_1" }, quantity: 1 }], buyer: { email: "a@b.co" } });
+    expect(c.body.status).toBe("incomplete");
+    expect((await request(app2).get(`${BASE}/${c.body.id}`).set(as(B, "x"))).body.status).toBe("ready_for_complete");
+    const done = await request(app2).post(`${BASE}/${c.body.id}/complete`).set(as(B, "b1")).send(pay());
+    expect(done.status).toBe(200);
+    expect(done.body.status).toBe("completed");
   });
 });

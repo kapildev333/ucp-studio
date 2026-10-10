@@ -2,8 +2,11 @@ import Database from "better-sqlite3";
 
 export type Db = Database.Database;
 
+// orders.snapshot is the order object as JSON (immutable except fulfillment); webhook_url is captured from the platform profile at Complete.
 // Checkout request state is stored as JSON; totals and messages are derived on read. `status` is the snapshot taken at the last write (Complete gates on it).
-// ponytail: no migrations (CREATE IF NOT EXISTS only); delete server/data.db after any schema change
+// checkouts.snapshot is the response body (minus `ucp`) frozen at Complete/Cancel; once set, reads never touch the catalog again.
+// ponytail: no migrations; bumping SCHEMA_VERSION drops and recreates the transactional tables (orders, checkouts, idempotency), so that data is discarded. Real migrations if it must survive.
+const SCHEMA_VERSION = 3;
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS products (
   id TEXT PRIMARY KEY, handle TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL,
@@ -13,11 +16,11 @@ CREATE TABLE IF NOT EXISTS variants (
   description TEXT NOT NULL, price INTEGER NOT NULL, options TEXT NOT NULL, stock INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS checkouts (
   id TEXT PRIMARY KEY, request TEXT NOT NULL, status TEXT NOT NULL, canceled INTEGER NOT NULL DEFAULT 0,
-  order_id TEXT, created_at TEXT NOT NULL, expires_at TEXT NOT NULL);
+  order_id TEXT, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, snapshot TEXT);
 CREATE TABLE IF NOT EXISTS idempotency (
   key TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, status INTEGER NOT NULL, body TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS orders (
-  id TEXT PRIMARY KEY, checkout_id TEXT NOT NULL, total INTEGER NOT NULL, currency TEXT NOT NULL, created_at TEXT NOT NULL);
+  id TEXT PRIMARY KEY, checkout_id TEXT NOT NULL, snapshot TEXT NOT NULL, webhook_url TEXT, created_at TEXT NOT NULL);
 `;
 
 // [handle, title, description, category, [variant title, price cents, [option name, label], stock][]]
@@ -54,6 +57,10 @@ export function seedCatalog(db: Db) {
 export function openDb(path: string): Db {
   const db = new Database(path);
   db.pragma("foreign_keys = ON");
+  if ((db.pragma("user_version", { simple: true }) as number) < SCHEMA_VERSION) {
+    db.exec("DROP TABLE IF EXISTS orders; DROP TABLE IF EXISTS checkouts; DROP TABLE IF EXISTS idempotency");
+    db.pragma(`user_version = ${SCHEMA_VERSION}`);
+  }
   db.exec(SCHEMA);
   if (!db.prepare("SELECT 1 FROM products LIMIT 1").get()) seedCatalog(db);
   return db;

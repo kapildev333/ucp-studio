@@ -3,7 +3,7 @@ import http from "node:http";
 import request from "supertest";
 import { createApp } from "../src/app.js";
 import {
-  checkVersion, checkServices, checkPaymentHandlers, checkCapabilities, checkRestEndpoint, checkTransportSecurity, checkKeys,
+  checkVersion, checkServices, checkPaymentHandlers, checkCapabilities, checkRestEndpoint, checkTransportSecurity, checkKeys, checkLiveMcp,
 } from "../src/studio/inspect.js";
 
 const p = (ucp: object, extra: object = {}) => ({ ucp, ...extra });
@@ -68,6 +68,8 @@ describe("studio API end to end", () => {
       expect(a.body.code).toBe("forbidden_host");
       expect((await request(app).post("/api/inspect").set("Host", host).send({ url: base })).status).toBe(403);
       expect((await request(app).post("/api/proxy").set("Host", host).send({ method: "GET", url: `${base}/terms` })).status).toBe(403);
+      expect((await request(app).post("/api/conformance").set("Host", host).send({ url: base })).status).toBe(403);
+      expect((await request(app).get("/api/webhooks/orders").set("Host", host)).status).toBe(403);
     }
     for (const host of ["localhost:4000", "127.0.0.1", "[::1]:4000"]) {
       expect((await request(app).get("/api/agent-profile").set("Host", host)).status).toBe(200);
@@ -76,7 +78,7 @@ describe("studio API end to end", () => {
 
   it("serves the agent profile", async () => {
     const res = await request(app).get("/api/agent-profile");
-    expect(Object.keys(res.body.ucp.capabilities)).toHaveLength(4);
+    expect(Object.keys(res.body.ucp.capabilities)).toHaveLength(5);
   });
 
   it("inspects the built-in merchant: no failures", async () => {
@@ -86,9 +88,9 @@ describe("studio API end to end", () => {
     expect(res.body.profile.ucp.version).toBe("2026-08-25");
     expect(res.body.summary.fail).toBe(0);
     expect(res.body.checks.map((c: { id: string }) => c.id)).toEqual([
-      "reachable", "version", "services", "payment_handlers", "capabilities", "rest_endpoint", "transport_security", "keys", "live_catalog",
+      "reachable", "version", "services", "payment_handlers", "capabilities", "rest_endpoint", "transport_security", "keys", "live_catalog", "live_mcp",
     ]);
-    expect(res.body.checks.at(-1).status).toBe("pass");
+    expect(res.body.checks.slice(-2).map((c: { status: string }) => c.status)).toEqual(["pass", "pass"]);
   });
 
   it("unreachable origin gives a single failed reachable check", async () => {
@@ -151,5 +153,48 @@ describe("studio API end to end", () => {
       expect(res.status).toBe(400);
       expect(res.body.code).toBe("invalid_request");
     }
+  });
+});
+
+describe("webhook receiver and agent profile", () => {
+  const app = createApp({ dbPath: ":memory:", baseUrl: "http://127.0.0.1:4000" });
+  it("advertises the order capability with webhook_url", async () => {
+    const res = await request(app).get("/api/agent-profile");
+    expect(res.body.ucp.capabilities["dev.ucp.shopping.order"]).toEqual([
+      { version: "2026-08-25", config: { webhook_url: "http://127.0.0.1:4000/api/webhooks/orders" } },
+    ]);
+  });
+  it("stores, lists newest first, caps at 200, and clears", async () => {
+    expect((await request(app).get("/api/webhooks/orders")).body).toEqual({ events: [] });
+    const hook = (b: object) => request(app).post("/api/webhooks/orders").set({ "Webhook-Id": "evt_1", "Webhook-Timestamp": "1", "UCP-Agent": 'profile="x"', "X-Other": "no" }).send(b);
+    expect((await hook({ n: 1 })).status).toBe(204);
+    await hook({ n: 2 });
+    const { events } = (await request(app).get("/api/webhooks/orders")).body;
+    expect(events.map((e: any) => e.body.n)).toEqual([2, 1]);
+    expect(events[0].headers).toEqual({ "webhook-id": "evt_1", "webhook-timestamp": "1", "ucp-agent": 'profile="x"' });
+    expect(Date.parse(events[0].received_at)).not.toBeNaN();
+    for (let i = 0; i < 205; i++) await hook({ n: 100 + i });
+    const capped = (await request(app).get("/api/webhooks/orders")).body.events;
+    expect(capped).toHaveLength(200);
+    expect(capped[0].body.n).toBe(304);
+    expect((await request(app).delete("/api/webhooks/orders")).status).toBe(204);
+    expect((await request(app).get("/api/webhooks/orders")).body.events).toEqual([]);
+  });
+  it("rejects non-object bodies", async () => {
+    for (const b of ["[1]", '"s"', "null"]) {
+      const res = await request(app).post("/api/webhooks/orders").set("Content-Type", "application/json").send(b);
+      expect(res.status, b).toBe(400);
+    }
+    expect((await request(app).post("/api/webhooks/orders").set("Content-Type", "application/json").send("{bad")).status).toBe(400);
+    expect((await request(app).post("/api/webhooks/orders").set("Content-Type", "text/plain").send("hi")).status).toBe(400);
+    expect((await request(app).post("/api/webhooks/orders")).status).toBe(400);
+  });
+});
+
+describe("live_mcp", () => {
+  it("is absent without an mcp transport entry or with a relative endpoint", async () => {
+    const svc = (e: object[]) => p({ services: { "x.y": e } });
+    expect(await checkLiveMcp(svc([{ transport: "rest", endpoint: "https://m.example/ucp" }]))).toBeUndefined();
+    expect(await checkLiveMcp(svc([{ transport: "mcp", endpoint: "/relative" }]))).toBeUndefined();
   });
 });

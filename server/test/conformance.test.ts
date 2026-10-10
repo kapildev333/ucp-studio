@@ -3,7 +3,7 @@ import http from "node:http";
 import express from "express";
 import request from "supertest";
 import { createApp } from "../src/app.js";
-import { checkTotals, checkMessages, checkStatusConsistency, runSteps, STEPS, type Ctx, type Step } from "../src/studio/conformance.js";
+import { checkTotals, checkAgentProbe, checkMessages, checkStatusConsistency, runSteps, STEPS, type Ctx, type Step } from "../src/studio/conformance.js";
 
 const listen = async (handler: http.RequestListener) => {
   const server = http.createServer(handler);
@@ -26,6 +26,21 @@ describe("pure helpers", () => {
     expect(checkTotals(t(["total", 1], ["total", 1])).status).toBe("fail");
     expect(checkTotals(t(["subtotal", 100], ["mystery", 5], ["total", 999])).status).toBe("warn");
     expect(checkTotals([...t(["subtotal", 100], ["total", 100]), { type: "mystery", amount: 5, display_text: "Mystery" }]).status).toBe("pass");
+  });
+  it("totals: unknown type with display_text is excluded but the equation is still asserted", () => {
+    const x = { type: "mystery", amount: 5, display_text: "Mystery" };
+    expect(checkTotals([...t(["subtotal", 100], ["total", 999]), x]).status).toBe("fail");
+    expect(checkTotals([...t(["subtotal", 100], ["total", 100]), x]).status).toBe("pass");
+    expect(checkTotals(t(["subtotal", 100], ["mystery", 5], ["total", 100])).status).toBe("warn");
+  });
+  it("agent probe: 5xx fails, 4xx passes, 2xx/3xx warns", () => {
+    const f = checkAgentProbe(503);
+    expect(f.status).toBe("fail");
+    expect(f.detail).toMatch(/server error.*503/);
+    expect(checkAgentProbe(500).detail).not.toMatch(/accepted/);
+    expect(checkAgentProbe(401).status).toBe("pass");
+    expect(checkAgentProbe(200)).toMatchObject({ status: "warn", detail: expect.stringContaining("accepted") });
+    expect(checkAgentProbe(302).status).toBe("warn");
   });
   it("message shape", () => {
     expect(checkMessages(undefined).status).toBe("pass");
@@ -92,11 +107,12 @@ describe("conformance over REST", () => {
     expect(typeof create.exchanges[0].duration_ms).toBe("number");
   });
 
-  it("built-in merchant, allow_complete: purchase passes, order and cancel skip", async () => {
+  // v2 merged: the built-in merchant now offers dev.ucp.shopping.order, so get_order runs instead of skipping.
+  it("built-in merchant, allow_complete: purchase and order pass, cancel skips", async () => {
     const res = await run({ url: s.base, allow_complete: true });
     expect(res.status).toBe(200);
-    expect(statuses(res.body)).toMatchObject({ complete_purchase: "pass", get_order: "skip", cancel_checkout: "skip", create_checkout: "pass" });
-    expect(res.body.summary).toEqual({ pass: 12, fail: 0, warn: 0, skip: 2 });
+    expect(statuses(res.body)).toMatchObject({ complete_purchase: "pass", get_order: "pass", cancel_checkout: "skip", create_checkout: "pass" });
+    expect(res.body.summary).toEqual({ pass: 13, fail: 0, warn: 0, skip: 1 });
   });
 
   it("honours item_id", async () => {
@@ -105,11 +121,7 @@ describe("conformance over REST", () => {
     expect(create.exchanges[0].request.body.line_items[0].item.id).toBe("var_4_1");
   });
 
-  it("rejects mcp and invalid bodies with 400 invalid_request", async () => {
-    const mcp = await run({ url: s.base, transport: "mcp" });
-    expect(mcp.status).toBe(400);
-    expect(mcp.body.code).toBe("invalid_request");
-    expect(mcp.body.content).toMatch(/MCP conformance is not available/);
+  it("rejects invalid bodies and unknown transports with 400 invalid_request", async () => {
     for (const body of [{}, { url: "nope" }, { url: "ftp://x.com" }, { url: s.base, transport: "soap" }, { url: s.base, allow_complete: "yes" }]) {
       const res = await run(body);
       expect(res.status).toBe(400);
@@ -134,6 +146,48 @@ describe("conformance over REST", () => {
     expect(prof.exchanges[0].response.status).toBe(0);
     expect(prof.exchanges[0].response.body).toBe(prof.detail);
     expect(prof.exchanges[0].request.headers["UCP-Agent"]).toContain("/api/agent-profile");
+  });
+});
+
+describe("conformance end to end, both transports", () => {
+  let s: Awaited<ReturnType<typeof listen>>;
+  let app: ReturnType<typeof createApp>;
+  beforeAll(async () => {
+    s = await listen((req, res) => app(req, res));
+    app = createApp({ dbPath: ":memory:", baseUrl: s.base });
+  });
+  afterAll(() => new Promise((r) => s.server.close(r)));
+
+  const base = {
+    profile: "pass", agent_header: "pass", catalog_search: "pass", create_checkout: "pass", totals_arithmetic: "pass",
+    messages_shape: "pass", status_consistency: "pass", get_checkout: "pass", idempotent_replay: "pass", idempotency_conflict: "pass",
+    unknown_checkout: "pass", complete_purchase: "skip", get_order: "skip", cancel_checkout: "pass",
+  };
+  const done = { complete_purchase: "pass", get_order: "pass", cancel_checkout: "skip" };
+  const restOnly = { agent_header: "skip", idempotent_replay: "skip", idempotency_conflict: "skip" };
+  const count = (m: Record<string, string>) => {
+    const c = { pass: 0, fail: 0, warn: 0, skip: 0 } as Record<string, number>;
+    for (const v of Object.values(m)) c[v]++;
+    return c;
+  };
+  const cases: [string, "rest" | "mcp", boolean, Record<string, string>][] = [
+    ["REST", "rest", false, base],
+    ["REST + allow_complete", "rest", true, { ...base, ...done }],
+    ["MCP", "mcp", false, { ...base, ...restOnly }],
+    ["MCP + allow_complete", "mcp", true, { ...base, ...restOnly, ...done }],
+  ];
+  it.each(cases)("%s: every step", async (_n, transport, allow_complete, expected) => {
+    const res = await request(app).post("/api/conformance").send({ url: s.base, transport, allow_complete });
+    expect(res.status).toBe(200);
+    expect(res.body.transport).toBe(transport);
+    expect(statuses(res.body)).toEqual(expected);
+    expect(res.body.summary).toEqual(count(expected));
+    if (transport === "mcp") {
+      const create = res.body.steps.find((x: { id: string }) => x.id === "create_checkout");
+      expect(create.exchanges[0].request).toMatchObject({ method: "POST", url: `${s.base}/ucp/mcp`, body: { jsonrpc: "2.0", method: "tools/call", params: { name: "create_checkout" } } });
+      expect(create.exchanges[0].request.body.params.arguments.meta["ucp-agent"].profile).toBe(`${s.base}/api/agent-profile`);
+      expect(create.exchanges[0].response.body.result.structuredContent.id).toMatch(/\S/);
+    }
   });
 });
 
@@ -173,3 +227,89 @@ describe("deliberately broken merchant", () => {
     expect(st.unknown_checkout).toBe("fail");
   });
 });
+
+describe("fake merchants, probes", () => {
+  let host: Awaited<ReturnType<typeof listen>>;
+  let app: ReturnType<typeof createApp>;
+  beforeAll(async () => {
+    host = await listen((req, res) => app(req, res));
+    app = createApp({ dbPath: ":memory:", baseUrl: host.base });
+  });
+  afterAll(() => new Promise((r) => host.server.close(r)));
+  const profile = (base: string, transport: string, endpoint: string) => ({
+    ucp: { version: "2026-08-25", services: { "dev.ucp.shopping": [{ transport, endpoint }] }, capabilities: { "dev.ucp.shopping.catalog.search": [{ version: "2026-08-25" }] }, payment_handlers: {} },
+  });
+  const conf = async (f: express.Express, transport: string) => {
+    const fake = await listen(f);
+    try {
+      return (await request(app).post("/api/conformance").send({ url: fake.base, transport })).body;
+    } finally {
+      await new Promise((r) => fake.server.close(r));
+    }
+  };
+
+  it("REST: a 500 on the header-less probe is fail", async () => {
+    const f = express();
+    f.get("/.well-known/ucp", (req, res) => res.json(profile("", "rest", `http://${req.headers.host}/ucp`)));
+    f.use((_req, res) => res.status(500).send("broken"));
+    const body = await conf(f, "rest");
+    const step = body.steps.find((x: { id: string }) => x.id === "agent_header");
+    expect(step.status).toBe("fail");
+    expect(step.detail).toMatch(/server error \(500\)/);
+  });
+
+  it("MCP: a JSON-RPC error on the unknown checkout is a pass; an error where a body was expected fails the step", async () => {
+    const f = express();
+    f.get("/.well-known/ucp", (req, res) => res.json(profile("", "mcp", `http://${req.headers.host}/mcp`)));
+    f.post("/mcp", express.json(), (req, res) => {
+      const { id, params } = req.body;
+      if (params.name === "get_checkout") return res.json({ jsonrpc: "2.0", id, error: { code: -32000, message: "Checkout not found" } });
+      res.json({ jsonrpc: "2.0", id, error: { code: -32603, message: "kaput" } });
+    });
+    const body = await conf(f, "mcp");
+    const st = statuses(body);
+    expect(st.unknown_checkout).toBe("pass");
+    expect(st).toMatchObject({ profile: "pass", agent_header: "skip", catalog_search: "fail" });
+    const cat = body.steps.find((x: { id: string }) => x.id === "catalog_search");
+    expect(cat.detail).toContain("-32603");
+    expect(cat.detail).toContain("kaput");
+  });
+
+  // A third-party-style MCP merchant: `reply(name)` supplies each tool's result; records the Accept header.
+  const mcpMerchant = (reply: (name: string, id: number) => object, seen: string[] = []) => {
+    const f = express();
+    f.get("/.well-known/ucp", (req, res) => res.json(profile("", "mcp", `http://${req.headers.host}/mcp`)));
+    f.post("/mcp", express.json(), (req, res) => {
+      seen.push(String(req.headers.accept));
+      res.json({ jsonrpc: "2.0", id: req.body.id, ...reply(req.body.params.name, req.body.id) });
+    });
+    return f;
+  };
+  const text = (o: unknown, isError = false) => ({ result: { content: [{ type: "text", text: typeof o === "string" ? o : JSON.stringify(o) }], isError } });
+  const find = (b: any, id: string) => b.steps.find((x: { id: string }) => x.id === id);
+
+  it("MCP: a text-only isError tool result is a rejection (unknown_checkout)", async () => {
+    const body = await conf(mcpMerchant((n) => (n === "get_checkout" ? text("Checkout not found", true) : text("boom", true))), "mcp");
+    expect(statuses(body).unknown_checkout).toBe("pass");
+    expect(find(body, "catalog_search").status).toBe("fail");
+  });
+
+  it("MCP: a body only in content[0].text is read like structuredContent; Accept is sent", async () => {
+    const seen: string[] = [];
+    const body = await conf(mcpMerchant((n) => (n === "search_catalog" ? text({ ucp: { version: "2026-08-25" }, products: [] }) : text("nope", true)), seen), "mcp");
+    expect(find(body, "catalog_search").detail).not.toMatch(/structuredContent|ucp\.version/);
+    expect(find(body, "catalog_search").status).toBe("pass");
+    expect(seen.every((a) => a === "application/json, text/event-stream")).toBe(true);
+    expect(seen.length).toBeGreaterThan(0);
+  });
+
+  it("MCP: a result with no object body fails with a clear message; a string error is not undefined", async () => {
+    const body = await conf(mcpMerchant((n) => (n === "search_catalog" ? text("plain words") : { error: "nope" })), "mcp");
+    expect(find(body, "catalog_search").detail).toBe("search_catalog: result has no structuredContent");
+    const body2 = await conf(mcpMerchant(() => ({ error: "nope" })), "mcp");
+    const d = find(body2, "catalog_search").detail;
+    expect(d).toContain("nope");
+    expect(d).not.toContain("undefined");
+  });
+});
+

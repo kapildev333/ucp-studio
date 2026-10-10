@@ -1,28 +1,28 @@
-import express, { Router } from "express";
+import express from "express";
 import { openDb } from "./db.js";
-import { errorHandler, protocolError, ucpHeaders } from "./ucp.js";
+import { errorHandler } from "./ucp.js";
 import { profileRouter } from "./merchant/profile.js";
-import { catalogRouter } from "./merchant/catalog.js";
-import { inspectRouter } from "./studio/inspect.js";
+import { mcpRouter } from "./merchant/mcp.js";
+import { adminRouter, orderRouter, restRouter } from "./merchant/rest.js";
+import { inspectRouter, localHostOnly } from "./studio/inspect.js";
 import { proxyRouter } from "./studio/proxy.js";
 import { conformanceRouter } from "./studio/conformance.js";
-import { merchantAdminRouter } from "./merchant-admin/catalog.js";
-import { checkoutRouter, orderRouter } from "./merchant/checkout.js";
+import { crossSiteGuard, merchantAdminRouter } from "./merchant-admin/catalog.js";
+import type { ProfileCache } from "./merchant/negotiate.js";
+import { webhookRouter } from "./studio/webhooks.js";
 
-export function createApp({ dbPath, baseUrl }: { dbPath: string; baseUrl: string }) {
+export function createApp({ dbPath, baseUrl, fetch = globalThis.fetch }: { dbPath: string; baseUrl: string; fetch?: typeof globalThis.fetch }) {
   const db = openDb(dbPath);
   const app = express();
+  // ponytail: one profile cache shared by REST and MCP, unbounded and never invalidated (5 min TTL on read); LRU / explicit refresh if it matters
+  const deps = { db, baseUrl, fetch, cache: new Map() as ProfileCache };
   app.use(profileRouter(baseUrl));
   app.use(orderRouter(db));
-  const ucp = Router();
-  ucp.use(ucpHeaders);
-  ucp.use(express.json()); // after ucpHeaders so bad bodies still get Request-Id and the UCP-Agent check
-  ucp.use("/catalog", catalogRouter(db));
-  ucp.use("/checkout-sessions", checkoutRouter(db, baseUrl));
-  ucp.use((_req, res) => protocolError(res, 404, "not_found", "No such UCP endpoint"));
-  app.use("/ucp", ucp);
-  app.use("/api", express.json(), inspectRouter(baseUrl), proxyRouter(baseUrl), conformanceRouter(baseUrl));
-  app.use("/merchant-admin", express.json({ limit: "10mb" }), merchantAdminRouter(db));
+  // Both guards sit on the mount, before the body parser, so they cover every admin route including orders/:id/ship.
+  app.use("/merchant-admin", localHostOnly, crossSiteGuard, express.json({ limit: "10mb" }), merchantAdminRouter(db), adminRouter({ db, baseUrl, fetch }));
+  app.use("/ucp", mcpRouter(deps));
+  app.use("/ucp", restRouter(deps));
+  app.use("/api", express.json(), inspectRouter(baseUrl), proxyRouter(baseUrl), conformanceRouter(baseUrl), webhookRouter());
   app.use(errorHandler);
   return app;
 }

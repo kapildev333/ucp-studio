@@ -25,9 +25,10 @@ export const proxyRouter = (baseUrl: string) => {
     res.json({
       ucp: {
         version: UCP_VERSION,
-        capabilities: Object.fromEntries(
-          ["checkout", "catalog.search", "catalog.lookup", "fulfillment"].map((c) => [`dev.ucp.shopping.${c}`, cap]),
-        ),
+        capabilities: {
+          ...Object.fromEntries(["checkout", "catalog.search", "catalog.lookup", "fulfillment"].map((c) => [`dev.ucp.shopping.${c}`, cap])),
+          "dev.ucp.shopping.order": [{ version: UCP_VERSION, config: { webhook_url: `${baseUrl}/api/webhooks/orders` } }],
+        },
       },
     });
   });

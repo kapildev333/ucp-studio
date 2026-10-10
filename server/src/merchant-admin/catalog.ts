@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { Router } from "express";
+import { Router, type RequestHandler } from "express";
 import { z } from "zod";
 import { protocolError } from "../ucp.js";
 import { seedCatalog, type Db } from "../db.js";
@@ -29,16 +29,16 @@ const importBody = z.object({ replace: z.boolean().default(false), products: z.a
 
 const slug = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
+// ponytail: header-based CSRF check only (browsers always send Sec-Fetch-Site); real auth is out of scope
+export const crossSiteGuard: RequestHandler = (req, res, next) =>
+  req.method !== "GET" && req.header("Sec-Fetch-Site") === "cross-site" ? protocolError(res, 403, "forbidden", "Cross-site requests are not allowed") : next();
+
 // ponytail: no auth, localhost demo only; add real auth before exposing this beyond the developer's machine
 export const merchantAdminRouter = (db: Db) => {
   const r = Router();
 
-  // ponytail: header-based CSRF check only (browsers always send Sec-Fetch-Site); real auth is out of scope
-  r.use((req, res, next) =>
-    req.method !== "GET" && req.header("Sec-Fetch-Site") === "cross-site" ? protocolError(res, 403, "forbidden", "Cross-site requests are not allowed") : next());
-
   r.get("/catalog", (_req, res) => {
-    const variants = db.prepare("SELECT * FROM variants ORDER BY id").all() as any[];
+    const variants = db.prepare("SELECT * FROM variants ORDER BY rowid").all() as any[];
     const products = (db.prepare("SELECT * FROM products ORDER BY position").all() as any[]).map((p) => ({
       id: p.id, title: p.title, description: p.description, categories: JSON.parse(p.categories),
       variants: variants.filter((v) => v.product_id === p.id).map((v) => ({
