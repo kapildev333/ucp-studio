@@ -198,3 +198,15 @@ describe("live_mcp", () => {
     expect(await checkLiveMcp(svc([{ transport: "mcp", endpoint: "/relative" }]))).toBeUndefined();
   });
 });
+
+describe("unknown /api path", () => {
+  it("is a JSON not_found, not Express's HTML 404", async () => {
+    const app = createApp({ dbPath: ":memory:", baseUrl: "http://127.0.0.1:4000" });
+    for (const [m, path] of [["get", "/api/nope"], ["post", "/api/inspect/x"]] as const) {
+      const res = await request(app)[m](path);
+      expect(res.status).toBe(404);
+      expect(res.type).toBe("application/json");
+      expect(res.body.code).toBe("not_found");
+    }
+  });
+});

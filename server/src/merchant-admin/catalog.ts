@@ -31,7 +31,7 @@ const slug = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(
 
 // ponytail: header-based CSRF check only (browsers always send Sec-Fetch-Site); real auth is out of scope
 export const crossSiteGuard: RequestHandler = (req, res, next) =>
-  req.method !== "GET" && req.header("Sec-Fetch-Site") === "cross-site" ? protocolError(res, 403, "forbidden", "Cross-site requests are not allowed") : next();
+  req.method !== "GET" && ["cross-site", "same-site"].includes(req.header("Sec-Fetch-Site") ?? "") ? protocolError(res, 403, "forbidden", "Cross-site requests are not allowed") : next();
 
 // ponytail: no auth, localhost demo only; add real auth before exposing this beyond the developer's machine
 export const merchantAdminRouter = (db: Db) => {

@@ -123,15 +123,16 @@ describe("catalog reset", () => {
 });
 
 describe("catalog hardening", () => {
-  it("rejects cross-site writes, allows same-site", async () => {
+  it("rejects cross-site and same-site writes, allows same-origin", async () => {
     const app = mk();
     await imp(app, { replace: true, products: [prod()] });
     const before = await catalog(app);
     const bad = await request(app).post("/merchant-admin/catalog/reset").set("Sec-Fetch-Site", "cross-site");
     expect(bad.status).toBe(403);
     expect(bad.body.code).toBe("forbidden");
+    expect((await request(app).post("/merchant-admin/catalog/reset").set("Sec-Fetch-Site", "same-site")).status).toBe(403);
     expect(await catalog(app)).toEqual(before);
-    expect((await request(app).post("/merchant-admin/catalog/reset").set("Sec-Fetch-Site", "same-site")).status).toBe(200);
+    expect((await request(app).post("/merchant-admin/catalog/reset").set("Sec-Fetch-Site", "same-origin")).status).toBe(200);
   });
   it("rejects duplicate product ids and duplicate variant ids", async () => {
     const app = mk();

@@ -1,6 +1,6 @@
 import express from "express";
 import { openDb } from "./db.js";
-import { errorHandler } from "./ucp.js";
+import { errorHandler, protocolError } from "./ucp.js";
 import { profileRouter } from "./merchant/profile.js";
 import { mcpRouter } from "./merchant/mcp.js";
 import { adminRouter, orderRouter, restRouter } from "./merchant/rest.js";
@@ -22,7 +22,7 @@ export function createApp({ dbPath, baseUrl, fetch = globalThis.fetch }: { dbPat
   app.use("/merchant-admin", localHostOnly, crossSiteGuard, express.json({ limit: "10mb" }), merchantAdminRouter(db), adminRouter({ db, baseUrl, fetch }));
   app.use("/ucp", mcpRouter(deps));
   app.use("/ucp", restRouter(deps));
-  app.use("/api", express.json(), inspectRouter(baseUrl), proxyRouter(baseUrl), conformanceRouter(baseUrl), webhookRouter());
+  app.use("/api", express.json(), inspectRouter(baseUrl), proxyRouter(baseUrl), conformanceRouter(baseUrl), webhookRouter(), (_req, res) => protocolError(res, 404, "not_found", "No such Studio API route"));
   app.use(errorHandler);
   return app;
 }
