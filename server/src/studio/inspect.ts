@@ -99,6 +99,25 @@ export async function checkLiveCatalog(p: Obj, baseUrl: string): Promise<Check |
   }
 }
 
+export async function checkLiveMcp(p: Obj): Promise<Check | undefined> {
+  const endpoint = Object.values(ucpOf(p).services ?? {}).flatMap((v) => (Array.isArray(v) ? v : [])).find((e) => isObj(e) && e.transport === "mcp" && isHttpUrl(e.endpoint))?.endpoint;
+  if (!endpoint) return undefined;
+  const title = "Live MCP";
+  const rpc = async (id: number, method: string, params: Obj) => {
+    const res = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id, method, params }), signal: AbortSignal.timeout(5000) });
+    return (await res.json().catch(() => ({}))) as Obj;
+  };
+  try {
+    const init = await rpc(1, "initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "ucp-studio-inspector", version: "0.2.0" } });
+    if (!init.result?.protocolVersion) return mk("live_mcp", title, "fail", "initialize returned no result.protocolVersion");
+    const list = await rpc(2, "tools/list", {});
+    const names = Array.isArray(list.result?.tools) ? list.result.tools.map((t: Obj) => t?.name) : [];
+    return names.includes("create_checkout") ? mk("live_mcp", title, "pass", `${names.length} tool(s), protocol ${init.result.protocolVersion}`) : mk("live_mcp", title, "fail", "tools/list does not contain create_checkout");
+  } catch (e) {
+    return mk("live_mcp", title, "fail", `Request failed: ${(e as Error).message}`);
+  }
+}
+
 export const inspectRouter = (baseUrl: string) => {
   const r = Router();
   r.post("/inspect", async (req, res, next) => {
@@ -116,8 +135,9 @@ export const inspectRouter = (baseUrl: string) => {
       const checks: Check[] = [check];
       if (profile) {
         const live = await checkLiveCatalog(profile, baseUrl);
+        const mcp = await checkLiveMcp(profile);
         checks.push(
-          ...[checkVersion(profile), checkServices(profile), checkPaymentHandlers(profile), checkCapabilities(profile), checkRestEndpoint(profile), checkTransportSecurity(profile), checkKeys(profile), live].filter((c): c is Check => !!c),
+          ...[checkVersion(profile), checkServices(profile), checkPaymentHandlers(profile), checkCapabilities(profile), checkRestEndpoint(profile), checkTransportSecurity(profile), checkKeys(profile), live, mcp].filter((c): c is Check => !!c),
         );
       }
       const summary = { pass: 0, fail: 0, warn: 0 };

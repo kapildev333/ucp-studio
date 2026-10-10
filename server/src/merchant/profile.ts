@@ -8,7 +8,7 @@ export const profileRouter = (baseUrl: string) => {
     res.json({
       ucp: {
         version: UCP_VERSION,
-        services: { "dev.ucp.shopping": [{ version: UCP_VERSION, transport: "rest", endpoint: `${baseUrl}/ucp` }] },
+        services: { "dev.ucp.shopping": [{ version: UCP_VERSION, transport: "rest", endpoint: `${baseUrl}/ucp` }, { version: UCP_VERSION, transport: "mcp", endpoint: `${baseUrl}/ucp/mcp` }] },
         capabilities: BUSINESS_CAPS,
         payment_handlers: { "dev.ucpstudio.mock_pay": [{ id: "mock_pay", version: UCP_VERSION }] },
       },

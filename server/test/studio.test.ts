@@ -3,7 +3,7 @@ import http from "node:http";
 import request from "supertest";
 import { createApp } from "../src/app.js";
 import {
-  checkVersion, checkServices, checkPaymentHandlers, checkCapabilities, checkRestEndpoint, checkTransportSecurity, checkKeys,
+  checkVersion, checkServices, checkPaymentHandlers, checkCapabilities, checkRestEndpoint, checkTransportSecurity, checkKeys, checkLiveMcp,
 } from "../src/studio/inspect.js";
 
 const p = (ucp: object, extra: object = {}) => ({ ucp, ...extra });
@@ -73,9 +73,9 @@ describe("studio API end to end", () => {
     expect(res.body.profile.ucp.version).toBe("2026-08-25");
     expect(res.body.summary.fail).toBe(0);
     expect(res.body.checks.map((c: { id: string }) => c.id)).toEqual([
-      "reachable", "version", "services", "payment_handlers", "capabilities", "rest_endpoint", "transport_security", "keys", "live_catalog",
+      "reachable", "version", "services", "payment_handlers", "capabilities", "rest_endpoint", "transport_security", "keys", "live_catalog", "live_mcp",
     ]);
-    expect(res.body.checks.at(-1).status).toBe("pass");
+    expect(res.body.checks.slice(-2).map((c: { status: string }) => c.status)).toEqual(["pass", "pass"]);
   });
 
   it("unreachable origin gives a single failed reachable check", async () => {
@@ -171,5 +171,13 @@ describe("webhook receiver and agent profile", () => {
       expect(res.status, b).toBe(400);
     }
     expect((await request(app).post("/api/webhooks/orders").set("Content-Type", "application/json").send("{bad")).status).toBe(400);
+  });
+});
+
+describe("live_mcp", () => {
+  it("is absent without an mcp transport entry or with a relative endpoint", async () => {
+    const svc = (e: object[]) => p({ services: { "x.y": e } });
+    expect(await checkLiveMcp(svc([{ transport: "rest", endpoint: "https://m.example/ucp" }]))).toBeUndefined();
+    expect(await checkLiveMcp(svc([{ transport: "mcp", endpoint: "/relative" }]))).toBeUndefined();
   });
 });
