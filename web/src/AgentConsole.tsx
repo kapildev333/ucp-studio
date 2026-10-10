@@ -4,6 +4,14 @@ import { Trace } from "./Trace";
 
 type Line = { id: string; title: string; price: number; qty: number };
 const STATES = ["incomplete", "ready_for_complete", "completed", "canceled"];
+// Third-party merchants may omit fields; fill the ones the UI dereferences so a bad response never blanks the app.
+const safeProduct = (p: J): J => ({
+  ...p,
+  title: p.title ?? p.id ?? "(untitled)",
+  categories: Array.isArray(p.categories) ? p.categories : [],
+  price_range: { min: { amount: p.price_range?.min?.amount ?? 0 } },
+  variants: (Array.isArray(p.variants) ? p.variants : []).map((v: J) => ({ ...v, title: v.title ?? v.id, price: { amount: v.price?.amount ?? 0 }, availability: { available: !!v.availability?.available } })),
+});
 const EMPTY_BUYER: Buyer = { first_name: "", last_name: "", email: "", phone_number: "" };
 const EMPTY_ADDR: Address = { street_address: "", address_locality: "", address_region: "", postal_code: "", address_country: "US" };
 
@@ -44,22 +52,23 @@ export function AgentConsole() {
   }
 
   const search = (q: string, ep = endpoint) =>
-    run("POST", `${ep}/catalog/search`, { query: q || undefined, pagination: { limit: 20 } }, (b) => setProducts(b.products ?? []));
+    run("POST", `${ep}/catalog/search`, { query: q || undefined, pagination: { limit: 20 } }, (b) => setProducts((Array.isArray(b.products) ? b.products : []).filter((p: J) => p && typeof p === "object").map(safeProduct)));
 
   const connect = () => {
+    reset();
     setEndpoint("");
     setProducts(null);
     run("GET", `${url.replace(/\/$/, "")}/.well-known/ucp`, undefined, (profile) => {
       const ep = restEndpoint(profile);
       if (!ep) return setError("This profile offers no REST endpoint.");
-      setEndpoint(ep);
-      search("", ep);
+      setEndpoint(ep.replace(/\/+$/, ""));
+      search("", ep.replace(/\/+$/, ""));
     });
   };
 
   const applyCheckout = (b: J) => {
     setMsgs(b.messages ?? []);
-    if (b.id) setCheckout(b);
+    if (b.id) setCheckout({ ...b, totals: Array.isArray(b.totals) ? b.totals : [] });
   };
   const body = (opt?: string, withAddress = true) => checkoutBody(cart, buyer, addr, opt, withAddress);
   const start = () => run("POST", "/checkout-sessions", body(undefined, false), applyCheckout);
@@ -105,7 +114,7 @@ export function AgentConsole() {
       <section className="wizard">
         <div className="strip" aria-label="Checkout status">
           {STATES.map((s, i) => (
-            <span key={s} className={`state ${s === status ? "current" : ""} ${s}`}>
+            <span key={s} aria-current={s === status ? "step" : undefined} className={`state ${s === status ? "current" : ""} ${s}`}>
               {i === 3 && <i className="sep" />}{s}{i < 2 && <i className="arrow">→</i>}
             </span>
           ))}
@@ -137,7 +146,7 @@ export function AgentConsole() {
                 <div className="row">
                   <label className="grow">
                     <span className="sr">Variant of {p.title}</span>
-                    <select value={picks[p.id] ?? p.variants.find((v: J) => v.availability.available)?.id ?? p.variants[0].id} onChange={(e) => setPicks({ ...picks, [p.id]: e.target.value })}>
+                    <select value={picks[p.id] ?? p.variants.find((v: J) => v.availability.available)?.id ?? p.variants[0]?.id} onChange={(e) => setPicks({ ...picks, [p.id]: e.target.value })}>
                       {p.variants.map((v: J) => (
                         <option key={v.id} value={v.id} disabled={!v.availability.available}>
                           {v.title} · {money(v.price.amount)}{v.availability.available ? "" : " · out of stock"}
@@ -158,12 +167,13 @@ export function AgentConsole() {
           {cart.map((l) => (
             <div className="line" key={l.id}>
               <span className="grow">{l.title}</span>
-              <input type="number" min={1} aria-label={`Quantity of ${l.title}`} value={l.qty} disabled={open} onChange={(e) => setQty(l.id, Number(e.target.value))} />
+              <input type="number" min={1} aria-label={`Quantity of ${l.title}`} value={l.qty} disabled={!!checkout && !open} onChange={(e) => setQty(l.id, Math.max(1, Math.floor(Number(e.target.value)) || 1))} />
               <span className="mono amt">{money(l.price * l.qty)}</span>
               <button aria-label={`Remove ${l.title}`} disabled={open} onClick={() => setQty(l.id, 0)}>×</button>
             </div>
           ))}
           <Msgs step="cart" />
+          {open && <button onClick={() => update()}>Update cart</button>}
           {!checkout && <button className="primary" disabled={!cart.length} onClick={start}>Start checkout</button>}
         </fieldset>
 
@@ -188,11 +198,11 @@ export function AgentConsole() {
             <fieldset className="step" disabled={busy || !open || !group}>
               <legend><i>5</i> Shipping</legend>
               {!group && <div className="empty">Add an address to see shipping options.</div>}
-              {group?.options.map((o: J) => (
+              {group?.options?.map((o: J) => (
                 <label className="radio" key={o.id}>
                   <input type="radio" name="ship" checked={group.selected_option_id === o.id} onChange={() => update(o.id)} />
                   <span className="grow">{o.title}</span>
-                  <span className="mono">{money(o.totals.find((t: J) => t.type === "total")?.amount ?? 0)}</span>
+                  <span className="mono">{money(o.totals?.find((t: J) => t.type === "total")?.amount ?? 0)}</span>
                 </label>
               ))}
               <Msgs step="shipping" />

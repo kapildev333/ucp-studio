@@ -12,7 +12,7 @@ npm test        # server and web tests
 npm run build   # type-check both, build the web app
 ```
 
-Open http://127.0.0.1:5173. The web dev server proxies `/api`, `/ucp`, `/.well-known` and `/orders` to the server.
+Open http://127.0.0.1:5173. The web app (including the Agent Console's default merchant URL) only works while `npm run dev` is running, because it relies on the Vite proxy. The web dev server proxies `/api`, `/ucp`, `/.well-known` and `/orders` to the server.
 
 ## Features
 

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { inspect, type J } from "./api";
 
 const LABEL = { pass: "PASS", warn: "WARN", fail: "FAIL" } as const;
+const ICON = { pass: "✓", warn: "!", fail: "✕" } as const;
 
 export function Inspector() {
   const [url, setUrl] = useState(window.location.origin);
@@ -47,7 +48,7 @@ export function Inspector() {
           <ul className="checks">
             {result.checks.map((c: J) => (
               <li key={c.id} className={c.status}>
-                <span className={`badge ${c.status}`}>{LABEL[c.status as keyof typeof LABEL]}</span>
+                <span className={`badge ${c.status}`}><span aria-hidden="true">{ICON[c.status as keyof typeof ICON]}</span> {LABEL[c.status as keyof typeof LABEL]}</span>
                 <span className="ctitle">{c.title}</span>
                 <span className="detail mono">{c.detail}</span>
               </li>

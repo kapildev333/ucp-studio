@@ -57,7 +57,7 @@ label > span:not(.sr) { display: block; font-size: 11px; color: var(--muted); ma
 .stat b { font-size: 18px; font-family: var(--mono); } .stat span { font: 700 10px var(--mono); letter-spacing: .06em; }
 .stat.pass b, .stat.pass span { color: var(--pass); } .stat.warn b, .stat.warn span { color: var(--warn); } .stat.fail b, .stat.fail span { color: var(--fail); }
 .checks { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--panel); }
-.checks li { display: grid; grid-template-columns: 52px 190px 1fr; gap: 12px; align-items: center; padding: 8px 12px; border-top: 1px solid var(--line); border-left: 3px solid transparent; }
+.checks li { display: grid; grid-template-columns: 64px 190px 1fr; gap: 12px; align-items: center; padding: 8px 12px; border-top: 1px solid var(--line); border-left: 3px solid transparent; }
 .checks li:first-child { border-top: 0; }
 .checks li.pass { border-left-color: var(--pass); } .checks li.warn { border-left-color: var(--warn); } .checks li.fail { border-left-color: var(--fail); }
 .ctitle { font-weight: 500; } .detail { color: var(--muted); overflow-wrap: anywhere; }
@@ -99,4 +99,4 @@ pre { margin: 4px 0; padding: 10px 12px; background: #090b0f; border: 1px solid 
 .status { font: 700 11px var(--mono); padding: 1px 6px; border-radius: 4px; }
 .status.ok { color: var(--pass); background: #3ecf8e18; } .status.warn { color: var(--warn); background: #f5b94218; } .status.err { color: var(--fail); background: #ff6b6b18; }
 
-@media (max-width: 1000px) { .console { grid-template-columns: 1fr; height: auto; } .wizard { border-right: 0; } .checks li { grid-template-columns: 52px 1fr; } .detail { grid-column: 2; } }
+@media (max-width: 1000px) { .console { grid-template-columns: 1fr; height: auto; } .wizard { border-right: 0; } .checks li { grid-template-columns: 64px 1fr; } .detail { grid-column: 2; } }
