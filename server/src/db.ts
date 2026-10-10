@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 
 export type Db = Database.Database;
 
-// Checkout request state is stored as JSON; totals, status and messages are derived on read.
+// Checkout request state is stored as JSON; totals and messages are derived on read. `status` is the snapshot taken at the last write (Complete gates on it).
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS products (
   id TEXT PRIMARY KEY, handle TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL,
@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS variants (
   id TEXT PRIMARY KEY, product_id TEXT NOT NULL REFERENCES products(id), sku TEXT NOT NULL, title TEXT NOT NULL,
   description TEXT NOT NULL, price INTEGER NOT NULL, options TEXT NOT NULL, stock INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS checkouts (
-  id TEXT PRIMARY KEY, request TEXT NOT NULL, canceled INTEGER NOT NULL DEFAULT 0,
+  id TEXT PRIMARY KEY, request TEXT NOT NULL, status TEXT NOT NULL, canceled INTEGER NOT NULL DEFAULT 0,
   order_id TEXT, created_at TEXT NOT NULL, expires_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS idempotency (
   key TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, status INTEGER NOT NULL, body TEXT NOT NULL);
