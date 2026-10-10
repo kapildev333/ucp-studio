@@ -43,6 +43,8 @@ export const checkoutRouter = (db: Db, baseUrl: string) => {
 
   const view = (row: Row, extra: Message[] = []) => {
     const req = JSON.parse(row.request) as CheckoutRequest;
+    const gone = unknownItems(req, (id) => !!lookup(id)); // variant deleted since the last write
+    if (gone.length) return errorBody(gone);
     const d = derive(req, lookup as (id: string) => Variant);
     const done = !!row.order_id;
     return {
@@ -117,6 +119,8 @@ export const checkoutRouter = (db: Db, baseUrl: string) => {
     const inst = payment.instruments[0];
     if (inst.handler_id !== "mock_pay") return protocolError(res, 400, "invalid_request", `Unsupported payment handler ${inst.handler_id}`);
     const request = JSON.parse(row.request) as CheckoutRequest;
+    const gone = unknownItems(request, (id) => !!lookup(id));
+    if (gone.length) return void res.json(errorBody(gone));
     const d = derive(request, lookup as (id: string) => Variant);
     if (d.status !== "ready_for_complete") { // stock changed since the last write; nothing charged
       db.prepare("UPDATE checkouts SET status = 'incomplete' WHERE id = ?").run(row.id);
