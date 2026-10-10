@@ -1,24 +1,17 @@
-import express, { Router } from "express";
+import express from "express";
 import { openDb } from "./db.js";
-import { errorHandler, protocolError, ucpHeaders } from "./ucp.js";
+import { errorHandler } from "./ucp.js";
 import { profileRouter } from "./merchant/profile.js";
-import { catalogRouter } from "./merchant/catalog.js";
+import { orderRouter, restRouter } from "./merchant/rest.js";
 import { inspectRouter } from "./studio/inspect.js";
 import { proxyRouter } from "./studio/proxy.js";
-import { checkoutRouter, orderRouter } from "./merchant/checkout.js";
 
-export function createApp({ dbPath, baseUrl }: { dbPath: string; baseUrl: string }) {
+export function createApp({ dbPath, baseUrl, fetch = globalThis.fetch }: { dbPath: string; baseUrl: string; fetch?: typeof globalThis.fetch }) {
   const db = openDb(dbPath);
   const app = express();
   app.use(profileRouter(baseUrl));
   app.use(orderRouter(db));
-  const ucp = Router();
-  ucp.use(ucpHeaders);
-  ucp.use(express.json()); // after ucpHeaders so bad bodies still get Request-Id and the UCP-Agent check
-  ucp.use("/catalog", catalogRouter(db));
-  ucp.use("/checkout-sessions", checkoutRouter(db, baseUrl));
-  ucp.use((_req, res) => protocolError(res, 404, "not_found", "No such UCP endpoint"));
-  app.use("/ucp", ucp);
+  app.use("/ucp", restRouter({ db, baseUrl, fetch }));
   app.use("/api", express.json(), inspectRouter(baseUrl), proxyRouter(baseUrl));
   app.use(errorHandler);
   return app;

@@ -23,7 +23,8 @@ export function unknownItems(req: CheckoutRequest, exists: (id: string) => boole
   }]);
 }
 
-export function derive(req: CheckoutRequest, lookup: (id: string) => Variant) {
+// `fulfillmentOn` false = the fulfillment extension wasn't negotiated: no fulfillment, total or messages for it.
+export function derive(req: CheckoutRequest, lookup: (id: string) => Variant, fulfillmentOn = true) {
   const variants = req.line_items.map((l) => lookup(l.item.id));
   const line_items = req.line_items.map((l, i) => {
     const amount = variants[i].price * l.quantity;
@@ -33,7 +34,7 @@ export function derive(req: CheckoutRequest, lookup: (id: string) => Variant) {
     };
   });
 
-  const method = req.fulfillment?.methods[0];
+  const method = fulfillmentOn ? req.fulfillment?.methods[0] : undefined;
   const dests = method?.destinations ?? [];
   const selected = dests.length ? OPTIONS.find((o) => o.id === method?.groups?.[0]?.selected_option_id) : undefined;
   const fulfillment = method && {
@@ -69,7 +70,7 @@ export function derive(req: CheckoutRequest, lookup: (id: string) => Variant) {
       content: `Only ${variants[i].stock} of ${variants[i].title} in stock`,
     }] : []),
     ...(req.buyer?.email ? [] : [required("$.buyer.email", "Buyer email is required")]),
-    ...(dests.length ? [] : [required("$.fulfillment.methods[0].destinations", "A shipping destination is required")]),
+    ...(dests.length || !fulfillmentOn ? [] : [required("$.fulfillment.methods[0].destinations", "A shipping destination is required")]),
     ...(dests.length && !selected ? [required("$.fulfillment.methods[0].groups[0].selected_option_id", "Select a shipping option")] : []),
   ];
   const status = messages.some((m) => m.type === "error") ? "incomplete" : "ready_for_complete";

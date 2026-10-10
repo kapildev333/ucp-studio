@@ -1,10 +1,10 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import request from "supertest";
 import { createApp } from "../src/app.js";
+import { AGENT, fakeFetch } from "./helpers.js";
 
 const baseUrl = "http://127.0.0.1:4000";
-const AGENT = { "UCP-Agent": 'profile="http://127.0.0.1:4000/api/agent-profile"' };
-const app = createApp({ dbPath: ":memory:", baseUrl });
+const app = createApp({ dbPath: ":memory:", baseUrl, fetch: fakeFetch() });
 const BASE = "/ucp/checkout-sessions";
 let n = 0;
 const key = () => `k-${++n}`;
