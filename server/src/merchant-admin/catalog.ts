@@ -6,7 +6,7 @@ import { seedCatalog, type Db } from "../db.js";
 
 const variant = z.object({
   id: z.string().min(1).optional(), sku: z.string().min(1), title: z.string().min(1),
-  price: z.number().int().min(0), stock: z.number().int().min(0),
+  price: z.number().int().min(0).max(100_000_000), stock: z.number().int().min(0).max(1_000_000), // keeps price * quantity a safe integer
   options: z.array(z.object({ name: z.string(), label: z.string() })).default([]),
 });
 const product = z.object({
@@ -73,6 +73,8 @@ export const merchantAdminRouter = (db: Db) => {
           variants++;
         }
       }
+      // A variant re-parented by this import can leave its old product empty; an empty product would break re-importing the export.
+      db.exec("DELETE FROM products WHERE id NOT IN (SELECT product_id FROM variants)");
     })();
     res.json({ imported: { products: body.products.length, variants } });
   });

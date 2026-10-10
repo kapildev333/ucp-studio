@@ -2,17 +2,17 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { ProtocolError, type Ctx, type Result } from "./errors.js";
 import { envelopeFor, has, incompatible } from "./negotiate.js";
+import { PAYMENT_HANDLERS } from "./profile.js";
 import { notify, place } from "./order-service.js";
 import { derive, unknownItems, type CheckoutRequest, type Message, type Variant } from "./checkout-logic.js";
 
 const CHECKOUT = "dev.ucp.shopping.checkout";
 const FULFILLMENT = "dev.ucp.shopping.fulfillment";
-const HANDLERS = { "dev.ucpstudio.mock_pay": [{ id: "mock_pay", version: "2026-08-25" }] };
 const TTL_MS = 6 * 60 * 60 * 1000;
 
 const str = z.string().default("");
 const requestBody = z.object({
-  line_items: z.array(z.object({ item: z.object({ id: z.string() }), quantity: z.number().int().min(1) })).min(1),
+  line_items: z.array(z.object({ item: z.object({ id: z.string() }), quantity: z.number().int().min(1).max(10_000) })).min(1),
   buyer: z.object({ first_name: z.string().optional(), last_name: z.string().optional(), email: z.string().optional(), phone_number: z.string().optional() }).optional(),
   fulfillment: z.object({
     methods: z.array(z.object({
@@ -66,7 +66,7 @@ const view = (ctx: Ctx, row: Row, extra: Message[] = []) => {
     totals: d.totals,
     messages: done ? [] : [...d.messages, ...extra],
     links: [{ type: "terms_of_service", url: `${ctx.baseUrl}/terms` }, { type: "privacy_policy", url: `${ctx.baseUrl}/privacy` }],
-    payment: { instruments: [] }, payment_handlers: HANDLERS, expires_at: row.expires_at,
+    payment: { instruments: [] }, payment_handlers: PAYMENT_HANDLERS, expires_at: row.expires_at,
     ...(row.order_id && { order: { id: row.order_id, permalink_url: `${ctx.baseUrl}/orders/${row.order_id}` } }),
   };
 };
@@ -95,9 +95,12 @@ function idempotent(ctx: Ctx, op: string, id: string, input: unknown, run: () =>
     if (hit.fingerprint !== fingerprint) throw new ProtocolError(409, "idempotency_conflict", "Idempotency-Key was used with a different request");
     return { status: hit.status, body: JSON.parse(hit.body) };
   }
-  const result = run();
-  ctx.db.prepare("INSERT INTO idempotency VALUES (?,?,?,?)").run(key, fingerprint, result.status, JSON.stringify(result.body));
-  return result;
+  // One transaction with the operation itself, so a crash cannot leave the effect without its replay record.
+  return ctx.db.transaction(() => {
+    const result = run();
+    ctx.db.prepare("INSERT INTO idempotency VALUES (?,?,?,?)").run(key, fingerprint, result.status, JSON.stringify(result.body));
+    return result;
+  })();
 }
 
 export const create = (ctx: Ctx, input: unknown): Result =>

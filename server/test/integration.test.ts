@@ -196,12 +196,14 @@ describe("body-parser client errors", () => {
   });
 });
 
-describe("products without variants", () => {
-  it("are omitted from the UCP catalog but stay in the back-office catalog", async () => {
+describe("products left without variants", () => {
+  it("are deleted by the import, so the export re-imports and the UCP catalog is clean", async () => {
     const app = mk();
     // var_8_1 is the only variant of prod_8; re-parent it onto prod_7.
     expect((await imp(app, { products: [{ id: "prod_7", title: "Leather Belt", variants: [{ id: "var_8_1", sku: "WS", title: "V", price: 1200, stock: 1 }] }] })).status).toBe(200);
-    expect((await request(app).get("/merchant-admin/catalog")).body.products.find((p: any) => p.id === "prod_8").variants).toEqual([]);
+    const exported = (await request(app).get("/merchant-admin/catalog")).body;
+    expect(exported.products.map((p: any) => p.id)).not.toContain("prod_8");
+    expect((await imp(app, exported)).status).toBe(200);
     const s = await request(app).post("/ucp/catalog/search").set(AGENT).send({ pagination: { limit: 50 } });
     expect(s.body.products.map((p: any) => p.id)).not.toContain("prod_8");
     expect(JSON.stringify(s.body)).not.toContain("null");

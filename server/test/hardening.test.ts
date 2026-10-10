@@ -176,3 +176,15 @@ describe("I2: Complete never charges a total the buyer has not seen", () => {
     expect((await request(app).post(`/ucp/checkout-sessions/${c.id}/complete`).set(key()).send(pay)).body.status).toBe("completed");
   });
 });
+
+describe("M1: money-path integers are bounded", () => {
+  const app = createApp({ dbPath: ":memory:", baseUrl: "http://127.0.0.1:4000", fetch: fakeFetch() });
+  it("rejects absurd price, stock and quantity", async () => {
+    const imp = (price: number, stock = 1) => request(app).post("/merchant-admin/catalog/import").set(STUDIO).send({ products: [{ title: "X", variants: [{ sku: "X", title: "V", price, stock }] }] });
+    expect((await imp(1e12)).status).toBe(400);
+    expect((await imp(1, 1e12)).status).toBe(400);
+    expect((await imp(100_000_000, 1_000_000)).status).toBe(200);
+    const res = await request(app).post("/ucp/checkout-sessions").set(AGENT).set("Idempotency-Key", "q").send({ line_items: [{ item: { id: "var_4_1" }, quantity: 9007199254740993 }] });
+    expect(res.status).toBe(400);
+  });
+});
