@@ -274,5 +274,42 @@ describe("fake merchants, probes", () => {
     expect(cat.detail).toContain("-32603");
     expect(cat.detail).toContain("kaput");
   });
+
+  // A third-party-style MCP merchant: `reply(name)` supplies each tool's result; records the Accept header.
+  const mcpMerchant = (reply: (name: string, id: number) => object, seen: string[] = []) => {
+    const f = express();
+    f.get("/.well-known/ucp", (req, res) => res.json(profile("", "mcp", `http://${req.headers.host}/mcp`)));
+    f.post("/mcp", express.json(), (req, res) => {
+      seen.push(String(req.headers.accept));
+      res.json({ jsonrpc: "2.0", id: req.body.id, ...reply(req.body.params.name, req.body.id) });
+    });
+    return f;
+  };
+  const text = (o: unknown, isError = false) => ({ result: { content: [{ type: "text", text: typeof o === "string" ? o : JSON.stringify(o) }], isError } });
+  const find = (b: any, id: string) => b.steps.find((x: { id: string }) => x.id === id);
+
+  it("MCP: a text-only isError tool result is a rejection (unknown_checkout)", async () => {
+    const body = await conf(mcpMerchant((n) => (n === "get_checkout" ? text("Checkout not found", true) : text("boom", true))), "mcp");
+    expect(statuses(body).unknown_checkout).toBe("pass");
+    expect(find(body, "catalog_search").status).toBe("fail");
+  });
+
+  it("MCP: a body only in content[0].text is read like structuredContent; Accept is sent", async () => {
+    const seen: string[] = [];
+    const body = await conf(mcpMerchant((n) => (n === "search_catalog" ? text({ ucp: { version: "2026-08-25" }, products: [] }) : text("nope", true)), seen), "mcp");
+    expect(find(body, "catalog_search").detail).not.toMatch(/structuredContent|ucp\.version/);
+    expect(find(body, "catalog_search").status).toBe("pass");
+    expect(seen.every((a) => a === "application/json, text/event-stream")).toBe(true);
+    expect(seen.length).toBeGreaterThan(0);
+  });
+
+  it("MCP: a result with no object body fails with a clear message; a string error is not undefined", async () => {
+    const body = await conf(mcpMerchant((n) => (n === "search_catalog" ? text("plain words") : { error: "nope" })), "mcp");
+    expect(find(body, "catalog_search").detail).toBe("search_catalog: result has no structuredContent");
+    const body2 = await conf(mcpMerchant(() => ({ error: "nope" })), "mcp");
+    const d = find(body2, "catalog_search").detail;
+    expect(d).toContain("nope");
+    expect(d).not.toContain("undefined");
+  });
 });
 

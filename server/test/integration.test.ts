@@ -159,3 +159,71 @@ describe("ship is behind the back-office cross-site guard", () => {
     expect((await ship(b)).status).toBe(409); // exactly one ship route: the second call sees the first one's write
   });
 });
+
+describe("/merchant-admin Host check", () => {
+  it("rejects a non-local Host on every admin route and changes nothing", async () => {
+    const app = mk();
+    const c = await create(app);
+    const id = (await request(app).post(`/ucp/checkout-sessions/${c.id}/complete`).set(k()).send(pay)).body.order.id as string;
+    const host = "evil.example:4000";
+    const before = (await request(app).get("/merchant-admin/catalog")).body;
+    const res = [
+      await request(app).get("/merchant-admin/orders").set("Host", host),
+      await request(app).get("/merchant-admin/catalog").set("Host", host),
+      await request(app).post("/merchant-admin/catalog/reset").set("Host", host),
+      await request(app).post("/merchant-admin/catalog/import").set("Host", host).send(other),
+      await request(app).post(`/merchant-admin/orders/${id}/ship`).set("Host", host),
+    ];
+    expect(res.map((r) => [r.status, r.body.code])).toEqual(res.map(() => [403, "forbidden_host"]));
+    expect((await request(app).get("/merchant-admin/catalog")).body).toEqual(before);
+    expect((await request(app).get(`/orders/${id}`)).body.fulfillment.events).toEqual([]);
+  });
+});
+
+describe("body-parser client errors", () => {
+  const bogus = { "Content-Type": "application/json; charset=bogus" };
+  it("REST: 400 invalid_request, no 500", async () => {
+    const res = await request(mk()).post("/ucp/catalog/search").set(AGENT).set(bogus).send("{}");
+    expect([res.status, res.body.code]).toEqual([400, "invalid_request"]);
+  });
+  it("MCP: HTTP 200 JSON-RPC -32600; unparseable JSON stays -32700", async () => {
+    const app = mk();
+    const res = await request(app).post("/ucp/mcp").set(bogus).send("{}");
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ jsonrpc: "2.0", id: null, error: { code: -32600 } });
+    const bad = await request(app).post("/ucp/mcp").set("Content-Type", "application/json").send("{nope");
+    expect(bad.body.error.code).toBe(-32700);
+  });
+});
+
+describe("products without variants", () => {
+  it("are omitted from the UCP catalog but stay in the back-office catalog", async () => {
+    const app = mk();
+    // var_8_1 is the only variant of prod_8; re-parent it onto prod_7.
+    expect((await imp(app, { products: [{ id: "prod_7", title: "Leather Belt", variants: [{ id: "var_8_1", sku: "WS", title: "V", price: 1200, stock: 1 }] }] })).status).toBe(200);
+    expect((await request(app).get("/merchant-admin/catalog")).body.products.find((p: any) => p.id === "prod_8").variants).toEqual([]);
+    const s = await request(app).post("/ucp/catalog/search").set(AGENT).send({ pagination: { limit: 50 } });
+    expect(s.body.products.map((p: any) => p.id)).not.toContain("prod_8");
+    expect(JSON.stringify(s.body)).not.toContain("null");
+    expect((await request(app).post("/ucp/catalog/product").set(AGENT).send({ id: "prod_8" })).status).toBe(404);
+    expect((await request(app).post("/ucp/catalog/lookup").set(AGENT).send({ ids: ["prod_8"] })).body.products).toEqual([]);
+  });
+});
+
+describe("order created_at", () => {
+  const rfc = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z$/;
+  it("is on every surface, stable across ship, and the list element equals GET /orders/:id", async () => {
+    const app = mk();
+    const c = await create(app);
+    const id = (await request(app).post(`/ucp/checkout-sessions/${c.id}/complete`).set(k()).send(pay)).body.order.id as string;
+    const ucp = (await request(app).get(`/ucp/orders/${id}`).set(AGENT)).body.created_at;
+    const plain = (await request(app).get(`/orders/${id}`)).body.created_at;
+    const listed = (await request(app).get("/merchant-admin/orders")).body.orders[0];
+    expect(ucp).toMatch(rfc);
+    expect([plain, listed.created_at]).toEqual([ucp, ucp]);
+    const shipped = await request(app).post(`/merchant-admin/orders/${id}/ship`);
+    expect(shipped.body.created_at).toBe(ucp);
+    expect((await request(app).get(`/ucp/orders/${id}`).set(AGENT)).body.created_at).toBe(ucp);
+    expect((await request(app).get("/merchant-admin/orders")).body.orders[0]).toEqual((await request(app).get(`/orders/${id}`)).body);
+  });
+});

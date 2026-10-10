@@ -4,10 +4,10 @@ import { errorHandler } from "./ucp.js";
 import { profileRouter } from "./merchant/profile.js";
 import { mcpRouter } from "./merchant/mcp.js";
 import { adminRouter, orderRouter, restRouter } from "./merchant/rest.js";
-import { inspectRouter } from "./studio/inspect.js";
+import { inspectRouter, localHostOnly } from "./studio/inspect.js";
 import { proxyRouter } from "./studio/proxy.js";
 import { conformanceRouter } from "./studio/conformance.js";
-import { merchantAdminRouter } from "./merchant-admin/catalog.js";
+import { crossSiteGuard, merchantAdminRouter } from "./merchant-admin/catalog.js";
 import type { ProfileCache } from "./merchant/negotiate.js";
 import { webhookRouter } from "./studio/webhooks.js";
 
@@ -18,8 +18,8 @@ export function createApp({ dbPath, baseUrl, fetch = globalThis.fetch }: { dbPat
   const deps = { db, baseUrl, fetch, cache: new Map() as ProfileCache };
   app.use(profileRouter(baseUrl));
   app.use(orderRouter(db));
-  // adminRouter (orders/:id/ship) sits after merchantAdminRouter so that router's cross-site guard covers it too.
-  app.use("/merchant-admin", express.json({ limit: "10mb" }), merchantAdminRouter(db), adminRouter({ db, baseUrl, fetch }));
+  // Both guards sit on the mount, before the body parser, so they cover every admin route including orders/:id/ship.
+  app.use("/merchant-admin", localHostOnly, crossSiteGuard, express.json({ limit: "10mb" }), merchantAdminRouter(db), adminRouter({ db, baseUrl, fetch }));
   app.use("/ucp", mcpRouter(deps));
   app.use("/ucp", restRouter(deps));
   app.use("/api", express.json(), inspectRouter(baseUrl), proxyRouter(baseUrl), conformanceRouter(baseUrl), webhookRouter());

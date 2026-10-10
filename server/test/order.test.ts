@@ -142,10 +142,12 @@ describe("webhooks", () => {
     expect(h.headers["UCP-Agent"]).toBe(`profile="${baseUrl}/.well-known/ucp"`);
     expect(Date.parse(h.body.created_time)).not.toBeNaN();
     expect(h.body).toMatchObject({ id, currency: "USD", fulfillment: { events: [] } });
+    expect(h.body.created_at).toMatch(/^\d{4}-\d\d-\d\dT/);
 
     await ship(app, id);
     await vi.waitFor(() => expect(hooks).toHaveLength(2));
     expect(hooks[1].body.fulfillment.events[0].type).toBe("shipped");
+    expect(hooks[1].body.created_at).toBe(h.body.created_at);
     expect(hooks[1].body.event_id).not.toBe(h.body.event_id);
   });
   it("is not sent without a usable webhook_url", async () => {

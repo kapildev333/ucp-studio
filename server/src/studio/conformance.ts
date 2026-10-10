@@ -172,14 +172,26 @@ export function mcpClient(origin: string, baseUrl: string, state: Ctx["state"]):
     if (!state.endpoint) throw new Error("No MCP endpoint known");
     const meta = { "ucp-agent": { profile: `${baseUrl}/api/agent-profile` }, ...(o.key && { "idempotency-key": o.key }) };
     const rpc = { jsonrpc: "2.0", id: ++n, method: "tools/call", params: { name, arguments: { meta, ...args } } };
-    const r = await exchange(state, "POST", state.endpoint, { "Content-Type": "application/json", "Request-Id": randomUUID() }, rpc);
-    const e = r.body?.error;
-    if (e) {
+    // ponytail: plain JSON-RPC POST only: no initialize handshake, session id or SSE response parsing; a merchant needing those fails here
+    const r = await exchange(state, "POST", state.endpoint, { "Content-Type": "application/json", Accept: "application/json, text/event-stream", "Request-Id": randomUUID() }, rpc);
+    const raw = r.body?.error;
+    if (raw) {
+      const e = { code: Number(raw?.code), message: String(raw?.message ?? raw) };
       if (o.rejectable) return { status: r.status, body: undefined, error: e };
       throw new Error(`${name}: JSON-RPC error ${e.code}: ${e.message}`);
     }
     if (r.status !== 200 || !r.body?.result) throw new Error(`${name}: expected a JSON-RPC result, got HTTP ${r.status}`);
-    return { status: r.status, body: r.body.result.structuredContent };
+    const result = r.body.result;
+    let body = result.structuredContent;
+    if (!isObj(body)) {
+      try {
+        body = JSON.parse(result.content?.[0]?.text);
+      } catch {}
+    }
+    if (isObj(body)) return { status: r.status, body };
+    // A standard MCP tool error (isError, text only) is a rejection when the step expects one.
+    if (result.isError && o.rejectable) return { status: r.status, body: undefined, error: { code: -32000, message: String(result.content?.[0]?.text ?? "tool error") } };
+    throw new Error(`${name}: result has no structuredContent`);
   };
   return {
     profile: () => exchange(state, "GET", `${origin}/.well-known/ucp`, { "UCP-Agent": `profile="${baseUrl}/api/agent-profile"`, "Request-Id": randomUUID() }),
@@ -196,7 +208,7 @@ export function mcpClient(origin: string, baseUrl: string, state: Ctx["state"]):
 // ---- steps ------------------------------------------------------------------------------------
 
 const hasCap = (ctx: Ctx, name: string) => !!ctx.profile?.ucp?.capabilities?.[name];
-const REST_ONLY = "REST only: MCP carries no headers or idempotency replay semantics to probe";
+const REST_ONLY = "REST only: this probe is defined for REST and the runner does not run it over MCP";
 const MOCK = "dev.ucpstudio.mock_pay";
 const isMoney = (v: unknown) => Number.isInteger(v);
 

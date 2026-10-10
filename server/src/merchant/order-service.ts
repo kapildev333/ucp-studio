@@ -6,17 +6,20 @@ import type { derive } from "./checkout-logic.js";
 
 const ORDER = "dev.ucp.shopping.order";
 type Deps = Pick<Ctx, "db" | "baseUrl" | "fetch">;
-type Row = { id: string; snapshot: string; webhook_url: string | null };
-type Order = { id: string; line_items: { id: string; quantity: { total: number; fulfilled: number }; status: string }[]; fulfillment: { events: unknown[] } };
+type Row = { id: string; snapshot: string; webhook_url: string | null; created_at: string };
+type Order = { created_at: string; id: string; line_items: { id: string; quantity: { total: number; fulfilled: number }; status: string }[]; fulfillment: { events: unknown[] } };
+
+// The one place an order object is read: the snapshot plus the row's creation time.
+const toOrder = (r: Row): Order => ({ ...JSON.parse(r.snapshot), created_at: r.created_at });
 
 export const find = (db: Db, id: string): Order | undefined => {
-  const row = db.prepare("SELECT snapshot FROM orders WHERE id = ?").get(id) as Row | undefined;
-  return row && JSON.parse(row.snapshot);
+  const row = db.prepare("SELECT snapshot, created_at FROM orders WHERE id = ?").get(id) as Row | undefined;
+  return row && toOrder(row);
 };
 
 // Newest first; rowid breaks ties between orders created in the same millisecond.
 export const list = (db: Db): Order[] =>
-  (db.prepare("SELECT snapshot FROM orders ORDER BY created_at DESC, rowid DESC LIMIT 100").all() as Row[]).map((r) => JSON.parse(r.snapshot));
+  (db.prepare("SELECT snapshot, created_at FROM orders ORDER BY created_at DESC, rowid DESC LIMIT 100").all() as Row[]).map(toOrder);
 
 // Called inside Complete's transaction: stores the snapshot (and the platform's webhook_url when order was negotiated).
 export function place(ctx: Ctx, id: string, checkoutId: string, d: ReturnType<typeof derive>) {
@@ -73,7 +76,8 @@ export function ship(ctx: Deps, id: string): Result {
     tracking_number: number, tracking_url: `${ctx.baseUrl}/track/${number}`, carrier: "MockShip", description: "Shipped",
   });
   for (const l of order.line_items) [l.quantity.fulfilled, l.status] = [l.quantity.total, "fulfilled"];
-  ctx.db.prepare("UPDATE orders SET snapshot = ? WHERE id = ?").run(JSON.stringify(order), id);
+  const { created_at: _, ...snapshot } = order;
+  ctx.db.prepare("UPDATE orders SET snapshot = ? WHERE id = ?").run(JSON.stringify(snapshot), id);
   notify(ctx, id);
   return { status: 200, body: order };
 }
@@ -92,10 +96,10 @@ export function notify(ctx: Deps, id: string) {
 }
 
 function schedule(ctx: Deps, id: string) {
-  const row = ctx.db.prepare("SELECT snapshot, webhook_url FROM orders WHERE id = ?").get(id) as Row | undefined;
+  const row = ctx.db.prepare("SELECT snapshot, webhook_url, created_at FROM orders WHERE id = ?").get(id) as Row | undefined;
   if (!row?.webhook_url) return;
   const event_id = `evt_${randomUUID()}`;
-  const body = JSON.stringify({ ...JSON.parse(row.snapshot), event_id, created_time: new Date().toISOString() });
+  const body = JSON.stringify({ ...toOrder(row), event_id, created_time: new Date().toISOString() });
   const send = async (attempt: number) => {
     let ok = false;
     try {

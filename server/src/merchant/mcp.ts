@@ -97,8 +97,11 @@ export const mcpRouter = ({ cache, ...deps }: { db: Db; baseUrl: string; fetch: 
     }
   });
   // A body over the limit is a JSON-RPC error (HTTP 200, like the others), not the REST envelope.
+  // Any other body-parser 4xx (e.g. an unsupported charset) is -32600 Invalid Request.
   r.use("/mcp", ((err, _req, res, next) => err?.type === "entity.too.large"
     ? void res.json({ jsonrpc: "2.0", id: null, error: { code: -32600, message: TOO_LARGE, data: { code: "payload_too_large", content: TOO_LARGE } } })
+    : err?.type && err.status >= 400 && err.status < 500
+    ? void res.json({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "Invalid Request" } })
     : next(err)) as ErrorRequestHandler);
   r.all("/mcp", (_req, res) => void res.status(405).set("Allow", "POST").end());
   return r;

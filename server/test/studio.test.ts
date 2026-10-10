@@ -68,6 +68,8 @@ describe("studio API end to end", () => {
       expect(a.body.code).toBe("forbidden_host");
       expect((await request(app).post("/api/inspect").set("Host", host).send({ url: base })).status).toBe(403);
       expect((await request(app).post("/api/proxy").set("Host", host).send({ method: "GET", url: `${base}/terms` })).status).toBe(403);
+      expect((await request(app).post("/api/conformance").set("Host", host).send({ url: base })).status).toBe(403);
+      expect((await request(app).get("/api/webhooks/orders").set("Host", host)).status).toBe(403);
     }
     for (const host of ["localhost:4000", "127.0.0.1", "[::1]:4000"]) {
       expect((await request(app).get("/api/agent-profile").set("Host", host)).status).toBe(200);
