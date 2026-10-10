@@ -18,10 +18,10 @@ const ucpOf = (p: Obj): Obj => (isObj(p.ucp) ? p.ucp : {});
 const mk = (id: string, title: string, status: Check["status"], detail: string): Check => ({ id, title, status, detail });
 
 // All service entries (any service name) offering the transport.
-const restEntries = (p: Obj, transport = "rest"): Obj[] =>
+const entriesOf = (p: Obj, transport = "rest"): Obj[] =>
   Object.values(ucpOf(p).services ?? {}).flatMap((v) => (Array.isArray(v) ? v : [])).filter((e) => isObj(e) && e.transport === transport);
 // Trailing slashes are stripped once here so callers can append "/path" safely.
-export const restEndpoint = (p: Obj, transport = "rest"): string | undefined => restEntries(p, transport).find((e) => isHttpUrl(e.endpoint))?.endpoint.replace(/\/+$/, "");
+export const endpointOf = (p: Obj, transport = "rest"): string | undefined => entriesOf(p, transport).find((e) => isHttpUrl(e.endpoint))?.endpoint.replace(/\/+$/, "");
 
 // Blocks DNS rebinding: a page that rebinds its hostname to 127.0.0.1 would otherwise reach the open forwarder same-origin.
 // ponytail: hostname allowlist only; binding to a non-loopback address or a custom local hostname needs this list extended.
@@ -55,14 +55,14 @@ export const checkCapabilities = (p: Obj): Check => {
 };
 
 export const checkRestEndpoint = (p: Obj): Check => {
-  const rest = restEntries(p);
+  const rest = entriesOf(p);
   if (!rest.length) return mk("rest_endpoint", "REST endpoint", "warn", "No service offers the rest transport");
-  const url = restEndpoint(p);
+  const url = endpointOf(p);
   return url ? mk("rest_endpoint", "REST endpoint", "pass", url) : mk("rest_endpoint", "REST endpoint", "fail", "rest transport offered without an absolute http(s) endpoint");
 };
 
 export const checkTransportSecurity = (p: Obj): Check | undefined => {
-  const url = restEndpoint(p);
+  const url = endpointOf(p);
   if (!url) return undefined;
   return url.startsWith("https:") ? mk("transport_security", "Transport security", "pass", "REST endpoint uses https") : mk("transport_security", "Transport security", "warn", "REST endpoint uses http (expected for localhost)");
 };
@@ -87,7 +87,7 @@ export async function checkReachable(origin: string): Promise<{ check: Check; pr
 }
 
 export async function checkLiveCatalog(p: Obj, baseUrl: string): Promise<Check | undefined> {
-  const endpoint = restEndpoint(p);
+  const endpoint = endpointOf(p);
   if (!endpoint || !ucpOf(p).capabilities?.["dev.ucp.shopping.catalog.search"]) return undefined;
   const title = "Live catalog search";
   try {
@@ -106,7 +106,7 @@ export async function checkLiveCatalog(p: Obj, baseUrl: string): Promise<Check |
 }
 
 export async function checkLiveMcp(p: Obj): Promise<Check | undefined> {
-  const endpoint = Object.values(ucpOf(p).services ?? {}).flatMap((v) => (Array.isArray(v) ? v : [])).find((e) => isObj(e) && e.transport === "mcp" && isHttpUrl(e.endpoint))?.endpoint;
+  const endpoint = endpointOf(p, "mcp");
   if (!endpoint) return undefined;
   const title = "Live MCP";
   const rpc = async (id: number, method: string, params: Obj) => {

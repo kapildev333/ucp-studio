@@ -248,6 +248,23 @@ describe("fake merchants, probes", () => {
     }
   };
 
+  it("REST: sessions made by the replay/conflict probes on a merchant that ignores idempotency are canceled", async () => {
+    const f = express();
+    f.use(express.json());
+    const made: string[] = [], canceled: string[] = [];
+    f.get("/.well-known/ucp", (req, res) => res.json(profile("", "rest", `http://${req.headers.host}/ucp`)));
+    f.post("/ucp/catalog/search", (_req, res) => res.json({ ucp: { version: "2026-08-25" }, products: [{ id: "p", title: "P", variants: [{ id: "v1", price: { amount: 1 } }] }] }));
+    f.post("/ucp/checkout-sessions", (_req, res) => {
+      const id = `c${made.push("x")}`;
+      res.status(201).json({ ucp: { version: "2026-08-25" }, id, status: "incomplete", currency: "USD", line_items: [{ id: "l" }], totals: [{ type: "total", amount: 0 }], messages: [{ type: "error", code: "x", content: "y", severity: "recoverable" }], links: [] });
+    });
+    f.post("/ucp/checkout-sessions/:id/cancel", (req, res) => { canceled.push(req.params.id); res.json({ id: req.params.id, status: "canceled" }); });
+    f.use((_req, res) => res.status(404).json({}));
+    await conf(f, "rest");
+    expect(made.length).toBe(3); // original + replay + conflict
+    expect(canceled.sort()).toEqual(["c1", "c2", "c3"]);
+  });
+
   it("REST: a 500 on the header-less probe is fail", async () => {
     const f = express();
     f.get("/.well-known/ucp", (req, res) => res.json(profile("", "rest", `http://${req.headers.host}/ucp`)));

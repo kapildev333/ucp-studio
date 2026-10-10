@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
-import { restEndpoint } from "./inspect.js";
+import { endpointOf } from "./inspect.js";
 
 type Obj = Record<string, any>;
 export type Status = "pass" | "fail" | "warn" | "skip";
@@ -205,6 +205,12 @@ export function mcpClient(origin: string, baseUrl: string, state: Ctx["state"]):
   };
 }
 
+// Best-effort cancel of a session a probe created by accident (a target that ignores idempotency); failures are ignored.
+async function discard(ctx: Ctx, id: unknown) {
+  if (typeof id !== "string" || id === ctx.checkout?.id) return;
+  await ctx.client.cancel(id, randomUUID()).catch(() => {});
+}
+
 // ---- steps ------------------------------------------------------------------------------------
 
 const hasCap = (ctx: Ctx, name: string) => !!ctx.profile?.ucp?.capabilities?.[name];
@@ -222,10 +228,10 @@ export const STEPS: Step[] = [
       if (!isObj(u) || typeof u.version !== "string") return out("fail", "ucp.version is missing");
       if (!isObj(u.services)) return out("fail", "ucp.services must be an object");
       if (!isObj(u.payment_handlers)) return out("fail", "ucp.payment_handlers must be an object");
-      const endpoint = restEndpoint(r.body, ctx.transport);
+      const endpoint = endpointOf(r.body, ctx.transport);
       if (!endpoint) return out("fail", `No service offers the ${ctx.transport} transport with an absolute http(s) endpoint`);
       ctx.profile = r.body;
-      ctx.state.endpoint = endpoint.replace(/\/+$/, "");
+      ctx.state.endpoint = endpoint;
       return out("pass", `${ctx.transport} endpoint ${ctx.state.endpoint}. Use the Inspector for the full static checklist.`);
     },
   },
@@ -296,6 +302,7 @@ export const STEPS: Step[] = [
     async run(ctx) {
       if (ctx.transport === "mcp") return out("skip", REST_ONLY);
       const r = await ctx.client.create(ctx.createBody, ctx.createKey!);
+      await discard(ctx, r.body?.id);
       return r.body?.id === ctx.checkout!.id ? out("pass", "Replay returned the same checkout") : out("warn", `Replay returned ${r.status} with id ${JSON.stringify(r.body?.id)}, expected ${ctx.checkout!.id}`);
     },
   },
@@ -305,6 +312,7 @@ export const STEPS: Step[] = [
       if (ctx.transport === "mcp") return out("skip", REST_ONLY);
       const other = { line_items: [{ item: ctx.createBody!.line_items[0].item, quantity: 2 }] };
       const r = await ctx.client.create(other, ctx.createKey!);
+      await discard(ctx, r.body?.id);
       return r.status === 409 ? out("pass", "Reused key with a different body returned 409") : out("warn", `Expected 409, got ${r.status}`);
     },
   },
