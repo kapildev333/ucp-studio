@@ -199,3 +199,28 @@ export function sameOrigin(merchantUrl: string, origin: string): boolean {
 
 // Pure: the url when it is http(s), else undefined (blocks javascript: and friends in merchant-supplied hrefs).
 export const safeHttpUrl = (u: unknown): string | undefined => (typeof u === "string" && /^https?:\/\//i.test(u) ? u : undefined);
+
+export async function runConformance(body: { url: string; transport: "rest" | "mcp"; allow_complete: boolean }): Promise<J> {
+  let res: Response;
+  try {
+    res = await post("/api/conformance", body);
+  } catch {
+    throw new Error("Cannot reach the Studio API. Is the server running on 127.0.0.1:4000?");
+  }
+  if (!res.ok) throw await errorOf(res, "Conformance");
+  return res.json();
+}
+
+async function merchantAdmin(send: Promise<Response>, what: string): Promise<J> {
+  let res: Response;
+  try {
+    res = await send;
+  } catch {
+    throw new Error("Cannot reach the Studio API. Is the server running on 127.0.0.1:4000?");
+  }
+  if (!res.ok) throw await errorOf(res, what);
+  return res.json();
+}
+export const getCatalog = (): Promise<J> => merchantAdmin(fetch("/merchant-admin/catalog"), "Catalog");
+export const importCatalog = (body: { replace: boolean; products: J[] }): Promise<J> => merchantAdmin(post("/merchant-admin/catalog/import", body), "Import");
+export const resetCatalog = (): Promise<J> => merchantAdmin(post("/merchant-admin/catalog/reset", {}), "Reset");
