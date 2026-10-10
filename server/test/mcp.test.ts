@@ -122,4 +122,18 @@ describe("MCP transport", () => {
     const rest = await request(app).post(`/ucp/checkout-sessions/${c.id}/complete`).set({ ...AGENT, "Idempotency-Key": "same" }).send(pay);
     expect(rest.body).toEqual(first);
   });
+
+  it("F4: a non-string profile is invalid_profile_url", async () => {
+    const { rpc } = setup();
+    const r = await rpc("tools/call", { name: "get_checkout", arguments: { meta: { "ucp-agent": { profile: [AGENT_URL] } }, id: "x" } });
+    expect(r.body.error).toMatchObject({ code: -32001, data: { code: "invalid_profile_url" } });
+  });
+
+  it("F5: REST and MCP share one profile cache", async () => {
+    const f = fakeFetch(profileOf([...CAPS, "dev.ucp.shopping.order"]));
+    const app = createApp({ dbPath: ":memory:", baseUrl, fetch: f });
+    await request(app).post("/ucp/catalog/search").set(AGENT).send({});
+    await request(app).post("/ucp/mcp").send({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "search_catalog", arguments: { meta: { "ucp-agent": { profile: AGENT_URL } } } } });
+    expect(f.calls).toEqual([AGENT_URL]);
+  });
 });

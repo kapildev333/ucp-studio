@@ -171,6 +171,8 @@ describe("webhook receiver and agent profile", () => {
       expect(res.status, b).toBe(400);
     }
     expect((await request(app).post("/api/webhooks/orders").set("Content-Type", "application/json").send("{bad")).status).toBe(400);
+    expect((await request(app).post("/api/webhooks/orders").set("Content-Type", "text/plain").send("hi")).status).toBe(400);
+    expect((await request(app).post("/api/webhooks/orders")).status).toBe(400);
   });
 });
 

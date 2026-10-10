@@ -110,11 +110,11 @@ export const complete = (ctx: Ctx, id: string, input: unknown): Result =>
   incompatible(ctx.negotiated, CHECKOUT) ?? idempotent(ctx, "complete", id, input, () => {
     const { payment } = completeBody.parse(input);
     const row = mustFind(ctx, id);
-    if (!live(row) || row.status !== "ready_for_complete") throw invalidState("Checkout is not ready for complete");
+    const request = JSON.parse(row.request) as CheckoutRequest;
+    const d = derived(ctx, request); // gate on the fresh status: the stored one may predate this platform's negotiation
+    if (!live(row) || (row.status !== "ready_for_complete" && d.status !== "ready_for_complete")) throw invalidState("Checkout is not ready for complete");
     const inst = payment.instruments[0];
     if (inst.handler_id !== "mock_pay") throw new ProtocolError(400, "invalid_request", `Unsupported payment handler ${inst.handler_id}`);
-    const request = JSON.parse(row.request) as CheckoutRequest;
-    const d = derived(ctx, request);
     if (d.status !== "ready_for_complete") { // stock changed since the last write; nothing charged
       ctx.db.prepare("UPDATE checkouts SET status = 'incomplete' WHERE id = ?").run(id);
       return ok(view(ctx, find(ctx, id)!));

@@ -14,8 +14,7 @@ const profileUrl = (req: Request) => /(?:^|,)\s*profile="([^"]*)"/.exec(req.head
 const fail = (res: Response, next: (e?: unknown) => void, e: unknown) =>
   e instanceof ProtocolError ? void protocolError(res, e.status, e.code, e.content) : next(e);
 
-export const restRouter = (deps: { db: Db; baseUrl: string; fetch: typeof fetch }) => {
-  const cache: ProfileCache = new Map(); // per app instance so tests don't leak into each other
+export const restRouter = ({ cache, ...deps }: { db: Db; baseUrl: string; fetch: typeof fetch; cache: ProfileCache }) => {
   const r = Router();
 
   // Request-Id first, then negotiate before the body is parsed so a missing UCP-Agent is reported ahead of bad JSON.

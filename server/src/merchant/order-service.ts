@@ -40,6 +40,7 @@ export function place(ctx: Ctx, id: string, checkoutId: string, d: ReturnType<ty
 // The platform's order entry at the negotiated version; only absolute http(s) URLs are kept.
 function webhookUrl(ctx: Ctx): string | null {
   const version = ctx.negotiated.capabilities.find((c) => c.name === ORDER)?.version;
+  if (!version) return null;
   const entries = ctx.negotiated.platformCapabilities[ORDER];
   const url = (Array.isArray(entries) ? entries : []).find((e) => e?.version === version)?.config?.webhook_url;
   try {
@@ -77,7 +78,16 @@ const WAITS = [1000, 5000]; // before attempts 2 and 3
 
 // POSTs the current order to the stored webhook_url after the response has gone out (next timer tick); never throws into the caller.
 // ponytail: in-process retries (3 attempts, 1 s then 5 s) and unsigned; a durable queue and RFC 9421 signatures are the upgrade.
+// webhook_url is an arbitrary outbound POST, acceptable only because the server binds 127.0.0.1.
 export function notify(ctx: Deps, id: string) {
+  try {
+    schedule(ctx, id);
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+function schedule(ctx: Deps, id: string) {
   const row = ctx.db.prepare("SELECT snapshot, webhook_url FROM orders WHERE id = ?").get(id) as Row | undefined;
   if (!row?.webhook_url) return;
   const event_id = `evt_${randomUUID()}`;
@@ -93,7 +103,9 @@ export function notify(ctx: Deps, id: string) {
         },
       })).ok;
     } catch {}
-    if (!ok && attempt < WAITS.length) setTimeout(() => void send(attempt + 1), WAITS[attempt]).unref();
+    if (ok) return;
+    if (attempt < WAITS.length) setTimeout(() => void send(attempt + 1), WAITS[attempt]).unref();
+    else console.warn(`webhook for order ${id} to ${row.webhook_url} failed after ${WAITS.length + 1} attempts; event dropped`);
   };
   setTimeout(() => void send(0), 0).unref();
 }

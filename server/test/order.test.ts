@@ -1,3 +1,7 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import Database from "better-sqlite3";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import request from "supertest";
 import { createApp } from "../src/app.js";
@@ -155,9 +159,10 @@ describe("webhooks", () => {
   });
   it("retries with 1 s then 5 s waits, then gives up", async () => {
     const { app, hooks, state } = setup();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     state.hookStatus = 500;
     vi.useFakeTimers({ toFake: ["setTimeout"] });
-    await buy(app);
+    const { id } = await buy(app);
     await vi.advanceTimersByTimeAsync(0);
     expect(hooks).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(999);
@@ -168,9 +173,13 @@ describe("webhooks", () => {
     expect(hooks).toHaveLength(2);
     await vi.advanceTimersByTimeAsync(1);
     expect(hooks).toHaveLength(3);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0].join(" ")).toContain(id);
+    expect(warn.mock.calls[0].join(" ")).toContain(HOOK);
     await vi.advanceTimersByTimeAsync(60_000);
     expect(hooks).toHaveLength(3);
     expect(new Set(hooks.map((x) => x.body.event_id)).size).toBe(1);
+    warn.mockRestore();
   });
   it("stops retrying after a success", async () => {
     const { app, hooks, state } = setup();
@@ -188,5 +197,27 @@ describe("webhooks", () => {
     const { done, id } = await buy(app);
     expect(done.status).toBe("completed");
     expect((await ship(app, id)).status).toBe(200);
+  });
+});
+
+describe("final fixes", () => {
+  it("F1: a v1 data.db is rebuilt so a full purchase works", async () => {
+    const dbPath = join(mkdtempSync(join(tmpdir(), "ucp-")), "data.db");
+    const old = new Database(dbPath);
+    old.exec("CREATE TABLE orders (id TEXT PRIMARY KEY, checkout_id TEXT, total INTEGER, currency TEXT, created_at TEXT)");
+    old.close();
+    const fetch = (async (url: string | URL | Request) => String(url) === AGENT_URL ? new Response(JSON.stringify(withHook())) : new Response("", { status: 200 })) as typeof globalThis.fetch;
+    const { done, id } = await buy(createApp({ dbPath, baseUrl, fetch }));
+    expect(done.status).toBe("completed");
+    expect(id).toMatch(/^ord_/);
+  });
+  it("F3: no webhook when order was not negotiated, even if the platform entry has no version", async () => {
+    const p = withHook(HOOK, CAPS) as any;
+    p.ucp.capabilities[ORDER] = [{ config: { webhook_url: HOOK } }];
+    const { app, hooks } = setup(p);
+    const { done } = await buy(app);
+    expect(done.status).toBe("completed");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(hooks).toEqual([]);
   });
 });

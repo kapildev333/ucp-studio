@@ -38,9 +38,7 @@ const PROFILE_CODES = ["invalid_profile_url", "profile_unreachable", "profile_ma
 
 const isObj = (v: unknown): v is Args => typeof v === "object" && v !== null && !Array.isArray(v);
 
-export const mcpRouter = (deps: { db: Db; baseUrl: string; fetch: typeof fetch }) => {
-  const cache: ProfileCache = new Map();
-
+export const mcpRouter = ({ cache, ...deps }: { db: Db; baseUrl: string; fetch: typeof fetch; cache: ProfileCache }) => {
   async function callTool(params: Args) {
     const t = TOOLS.find((x) => x.name === params.name);
     if (!t) throw new RpcError(-32602, `Unknown tool: ${params.name}`);

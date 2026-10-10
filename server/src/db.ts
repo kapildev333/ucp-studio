@@ -4,7 +4,8 @@ export type Db = Database.Database;
 
 // orders.snapshot is the order object as JSON (immutable except fulfillment); webhook_url is captured from the platform profile at Complete.
 // Checkout request state is stored as JSON; totals and messages are derived on read. `status` is the snapshot taken at the last write (Complete gates on it).
-// ponytail: no migrations (CREATE IF NOT EXISTS only); delete server/data.db after any schema change
+// ponytail: no migrations; bumping SCHEMA_VERSION drops and recreates the transactional tables (orders, checkouts, idempotency), so that data is discarded. Real migrations if it must survive.
+const SCHEMA_VERSION = 2;
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS products (
   id TEXT PRIMARY KEY, handle TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL,
@@ -42,6 +43,10 @@ const SEED: Seed[] = [
 export function openDb(path: string): Db {
   const db = new Database(path);
   db.pragma("foreign_keys = ON");
+  if ((db.pragma("user_version", { simple: true }) as number) < SCHEMA_VERSION) {
+    db.exec("DROP TABLE IF EXISTS orders; DROP TABLE IF EXISTS checkouts; DROP TABLE IF EXISTS idempotency");
+    db.pragma(`user_version = ${SCHEMA_VERSION}`);
+  }
   db.exec(SCHEMA);
   if (!db.prepare("SELECT 1 FROM products LIMIT 1").get()) {
     const addP = db.prepare("INSERT INTO products VALUES (?,?,?,?,?,?)");

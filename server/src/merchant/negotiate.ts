@@ -51,16 +51,16 @@ async function fetchProfile(url: string, f: typeof fetch) {
 }
 
 // Transport-independent: REST passes the UCP-Agent profile URL, MCP passes meta["ucp-agent"].profile.
-export async function negotiate(profileUrl: string | undefined, { fetch: f, cache }: { fetch: typeof fetch; cache: ProfileCache }): Promise<Negotiated> {
+export async function negotiate(profileUrl: unknown, { fetch: f, cache }: { fetch: typeof fetch; cache: ProfileCache }): Promise<Negotiated> {
   let ok = false;
   try {
-    ok = !!profileUrl && ["http:", "https:"].includes(new URL(profileUrl).protocol);
+    ok = typeof profileUrl === "string" && ["http:", "https:"].includes(new URL(profileUrl).protocol);
   } catch {}
   if (!ok) throw err(400, "invalid_profile_url", "UCP-Agent must carry profile=\"<absolute http(s) URL>\"");
-  let hit = cache.get(profileUrl!);
+  let hit = cache.get(profileUrl as string);
   if (!hit || Date.now() - hit.at > TTL_MS) {
-    hit = { at: Date.now(), profile: await fetchProfile(profileUrl!, f) };
-    cache.set(profileUrl!, hit);
+    hit = { at: Date.now(), profile: await fetchProfile(profileUrl as string, f) };
+    cache.set(profileUrl as string, hit);
   }
   const caps = hit.profile.ucp.capabilities;
   const platformCapabilities = caps && typeof caps === "object" && !Array.isArray(caps) ? caps : {};

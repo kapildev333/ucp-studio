@@ -8,7 +8,7 @@ export const webhookRouter = () => {
   const events: Received[] = []; // ponytail: in-memory, newest first, capped at 200; lost on restart
   const r = Router();
   r.post("/webhooks/orders", (req, res) => {
-    if (!req.body || typeof req.body !== "object" || Array.isArray(req.body)) return protocolError(res, 400, "invalid_request", "Body must be a JSON object");
+    if (!req.is("application/json") || !req.body || typeof req.body !== "object" || Array.isArray(req.body)) return protocolError(res, 400, "invalid_request", "Body must be a JSON object");
     const h = (n: string) => req.header(n);
     events.unshift({ received_at: new Date().toISOString(), headers: { "webhook-id": h("webhook-id"), "webhook-timestamp": h("webhook-timestamp"), "ucp-agent": h("ucp-agent") }, body: req.body });
     events.length = Math.min(events.length, 200);
