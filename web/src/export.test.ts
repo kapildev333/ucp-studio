@@ -70,6 +70,7 @@ describe("conformanceToMarkdown", () => {
     expect(md).not.toMatch(/→ 0/);
   });
   it("omits exchange section for steps without exchanges", () => {
-    expect(md).not.toContain("### Two");
+    expect(md).toContain("## s1: One");
+    expect(md).not.toContain("## s2: Two");
   });
 });

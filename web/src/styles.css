@@ -115,3 +115,5 @@ pre { margin: 4px 0; padding: 10px 12px; background: #090b0f; border: 1px solid 
 .steps details { margin-top: 6px; }
 .steps .trace { padding: 0; background: none; overflow: visible; }
 .notice { font-size: 12px; margin: 4px 0 10px; }
+input[type=checkbox] { width: auto; min-height: 0; padding: 0; accent-color: var(--accent); }
+label.notice { display: flex; align-items: center; gap: 8px; cursor: pointer; }
