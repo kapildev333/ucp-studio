@@ -1,0 +1,103 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import Database from "better-sqlite3";
+import { describe, it, expect } from "vitest";
+import request from "supertest";
+import { createApp } from "../src/app.js";
+import { AGENT, AGENT_URL, CAPS, fakeFetch, profileOf } from "./helpers.js";
+
+// Cross-lane behaviour: v2's checkout/order/MCP services against v3's back-office catalog.
+const baseUrl = "http://127.0.0.1:4000";
+const mk = (dbPath = ":memory:") => createApp({ dbPath, baseUrl, fetch: fakeFetch(profileOf([...CAPS, "dev.ucp.shopping.order"])) });
+const addr = { street_address: "1 Main St", address_locality: "Springfield", address_region: "CA", postal_code: "94000", address_country: "US" };
+const full = {
+  line_items: [{ item: { id: "var_4_1" }, quantity: 2 }], buyer: { email: "a@b.co" },
+  fulfillment: { methods: [{ type: "shipping", destinations: [addr], groups: [{ selected_option_id: "standard" }] }] },
+};
+const pay = { payment: { instruments: [{ id: "i1", handler_id: "mock_pay", type: "card", credential: { token: "tok_ok" } }] } };
+let n = 0;
+const k = () => ({ ...AGENT, "Idempotency-Key": `int-${++n}` });
+const create = async (app: any) => (await request(app).post("/ucp/checkout-sessions").set(k()).send(full)).body;
+const get = async (app: any, id: string) => (await request(app).get(`/ucp/checkout-sessions/${id}`).set(AGENT)).body;
+const imp = (app: any, body: object) => request(app).post("/merchant-admin/catalog/import").send(body);
+const mcp = async (app: any, name: string, args: object, key?: string) =>
+  (await request(app).post("/ucp/mcp").send({
+    jsonrpc: "2.0", id: 1, method: "tools/call",
+    params: { name, arguments: { meta: { "ucp-agent": { profile: AGENT_URL }, ...(key && { "idempotency-key": key }) }, ...args } },
+  })).body.result.structuredContent;
+const other = { replace: true, products: [{ title: "Mug", variants: [{ sku: "MUG-1", title: "V", price: 100, stock: 3 }] }] };
+
+describe("finished checkouts are frozen", () => {
+  it("completed: a later price/title upsert changes nothing, replays included", async () => {
+    const app = mk();
+    const c = await create(app);
+    const key = k();
+    const done = await request(app).post(`/ucp/checkout-sessions/${c.id}/complete`).set(key).send(pay);
+    expect(done.body.status).toBe("completed");
+    const r = await imp(app, { products: [{ id: "prod_4", title: "Renamed Tee", variants: [{ id: "var_4_1", sku: "TEE-X", title: "Renamed", price: 5, stock: 0 }] }] });
+    expect(r.status).toBe(200);
+    expect(await get(app, c.id)).toEqual(done.body);
+    expect((await request(app).post(`/ucp/checkout-sessions/${c.id}/complete`).set(key).send(pay)).body).toEqual(done.body);
+    expect(await mcp(app, "get_checkout", { id: c.id })).toEqual(done.body);
+  });
+  it("completed: survives replace:true and reset with totals, line items and order", async () => {
+    const app = mk();
+    const c = await create(app);
+    const done = (await request(app).post(`/ucp/checkout-sessions/${c.id}/complete`).set(k()).send(pay)).body;
+    await imp(app, other);
+    const after = await get(app, c.id);
+    expect(after).toEqual(done);
+    expect(after).toMatchObject({ status: "completed", totals: c.totals, line_items: c.line_items, order: { id: done.order.id } });
+    expect((await request(app).put(`/ucp/checkout-sessions/${c.id}`).set(k()).send(full)).body.code).toBe("invalid_state");
+    expect((await request(app).post(`/ucp/checkout-sessions/${c.id}/complete`).set(k()).send(pay)).body.code).toBe("invalid_state");
+    expect((await request(app).post(`/ucp/checkout-sessions/${c.id}/cancel`).set(k())).body.code).toBe("invalid_state");
+    await request(app).post("/merchant-admin/catalog/reset");
+    expect(await mcp(app, "get_checkout", { id: c.id })).toEqual(done);
+  });
+  it("canceled: survives upsert and replace:true on both transports; re-cancel replays the frozen body", async () => {
+    const app = mk();
+    const c = await create(app);
+    const x = (await request(app).post(`/ucp/checkout-sessions/${c.id}/cancel`).set(k())).body;
+    expect(x).toMatchObject({ status: "canceled", totals: c.totals, line_items: c.line_items });
+    await imp(app, { products: [{ id: "prod_4", title: "T", variants: [{ id: "var_4_1", sku: "TEE-X", title: "Renamed", price: 5, stock: 0 }] }] });
+    expect(await get(app, c.id)).toEqual(x);
+    await imp(app, other);
+    expect(await get(app, c.id)).toEqual(x);
+    expect(await mcp(app, "get_checkout", { id: c.id })).toEqual(x);
+    expect(await mcp(app, "cancel_checkout", { id: c.id }, "int-recancel")).toEqual(x);
+    expect((await request(app).post(`/ucp/checkout-sessions/${c.id}/complete`).set(k()).send(pay)).body.code).toBe("invalid_state");
+  });
+  it("open: still re-derives, and answers item_not_found (200) once its variant is gone", async () => {
+    const app = mk();
+    const c = await create(app);
+    await imp(app, { products: [{ id: "prod_4", title: "T", variants: [{ id: "var_4_1", sku: "TEE-X", title: "Renamed", price: 5, stock: 9 }] }] });
+    expect((await get(app, c.id)).line_items[0].item).toEqual({ id: "var_4_1", title: "Renamed", price: 5 });
+    await imp(app, other);
+    const g = await request(app).get(`/ucp/checkout-sessions/${c.id}`).set(AGENT);
+    expect(g.status).toBe(200);
+    expect(g.body.ucp.status).toBe("error");
+    expect(g.body.messages).toMatchObject([{ code: "item_not_found", path: "$.line_items[0].item.id" }]);
+    expect(await mcp(app, "get_checkout", { id: c.id })).toEqual(g.body);
+    const done = await request(app).post(`/ucp/checkout-sessions/${c.id}/complete`).set(k()).send(pay);
+    expect(done.status).toBe(200);
+    expect(done.body).toEqual(g.body);
+    expect(await mcp(app, "complete_checkout", { id: c.id, checkout: pay }, "int-gone")).toEqual(g.body);
+    expect((await request(app).put(`/ucp/checkout-sessions/${c.id}`).set(k()).send(full)).body).toEqual(g.body);
+    const x = await request(app).post(`/ucp/checkout-sessions/${c.id}/cancel`).set(k());
+    expect(x.status).toBe(200);
+    expect(x.body).toEqual(g.body);
+  });
+  it("a v2 data.db is rebuilt for the snapshot column and keeps its catalog", async () => {
+    const dbPath = join(mkdtempSync(join(tmpdir(), "ucp-")), "data.db");
+    mk(dbPath); // seeds the catalog
+    const old = new Database(dbPath);
+    old.exec("UPDATE variants SET price = 4242 WHERE id = 'var_4_1'; DROP TABLE checkouts; CREATE TABLE checkouts (id TEXT PRIMARY KEY, request TEXT NOT NULL, status TEXT NOT NULL, canceled INTEGER NOT NULL DEFAULT 0, order_id TEXT, created_at TEXT NOT NULL, expires_at TEXT NOT NULL)");
+    old.pragma("user_version = 2");
+    old.close();
+    const app = mk(dbPath);
+    const c = await create(app);
+    expect(c.line_items[0].item.price).toBe(4242);
+    expect((await request(app).post(`/ucp/checkout-sessions/${c.id}/complete`).set(k()).send(pay)).body.status).toBe("completed");
+  });
+});

@@ -35,7 +35,7 @@ const canon = (v: unknown): string =>
   : v && typeof v === "object" ? `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canon((v as Record<string, unknown>)[k])}`).join(",")}}`
   : JSON.stringify(v) ?? "null";
 
-type Row = { id: string; request: string; status: string; canceled: number; order_id: string | null; created_at: string; expires_at: string };
+type Row = { id: string; request: string; status: string; canceled: number; order_id: string | null; created_at: string; expires_at: string; snapshot: string | null };
 
 const lookup = (ctx: Ctx) => (id: string) => ctx.db.prepare("SELECT id, title, price, stock FROM variants WHERE id = ?").get(id) as Variant;
 const find = (ctx: Ctx, id: string) => ctx.db.prepare("SELECT * FROM checkouts WHERE id = ?").get(id) as Row | undefined;
@@ -49,13 +49,15 @@ const invalidState = (content: string) => new ProtocolError(409, "invalid_state"
 
 const errorBody = (ctx: Ctx, messages: Message[]) => ({ ucp: { ...envelopeFor(ctx.negotiated, [CHECKOUT, FULFILLMENT]), status: "error" }, messages });
 const view = (ctx: Ctx, row: Row, extra: Message[] = []) => {
+  const ucp = envelopeFor(ctx.negotiated, [CHECKOUT, FULFILLMENT]);
+  if (row.snapshot) return { ucp, ...(JSON.parse(row.snapshot) as { id: string }) }; // finished: frozen, never re-derived from the live catalog
   const req = JSON.parse(row.request) as CheckoutRequest;
   const missing = gone(ctx, req);
   if (missing.length) return errorBody(ctx, missing);
   const d = derived(ctx, req);
   const done = !!row.order_id;
   return {
-    ucp: envelopeFor(ctx.negotiated, [CHECKOUT, FULFILLMENT]), id: row.id,
+    ucp, id: row.id,
     status: done ? "completed" : live(row) ? d.status : "canceled",
     currency: "USD", line_items: d.line_items,
     ...(req.buyer && { buyer: req.buyer }),
@@ -66,6 +68,19 @@ const view = (ctx: Ctx, row: Row, extra: Message[] = []) => {
     payment: { instruments: [] }, payment_handlers: HANDLERS, expires_at: row.expires_at,
     ...(row.order_id && { order: { id: row.order_id, permalink_url: `${ctx.baseUrl}/orders/${row.order_id}` } }),
   };
+};
+
+// Run right after the completing/canceling write: stores the response body minus `ucp` (that stays per-request, from the caller's negotiation)
+// so later catalog changes (price, title, stock, deletion, reset) cannot alter a finished checkout.
+// A checkout canceled after its variant vanished has nothing to snapshot and keeps answering item_not_found.
+// ponytail: an expired checkout nobody canceled reads as "canceled" but is never written, so it still re-derives; freeze lazily on read if that matters.
+const freeze = (ctx: Ctx, id: string) => {
+  const body = view(ctx, find(ctx, id)!);
+  if ("id" in body) {
+    const { ucp: _, ...rest } = body;
+    ctx.db.prepare("UPDATE checkouts SET snapshot = ? WHERE id = ?").run(JSON.stringify(rest), id);
+  }
+  return body;
 };
 
 // Keyed on operation + checkout id + canonical input; replays stored responses, 409s on a reused key with a different request.
@@ -115,10 +130,11 @@ export const complete = (ctx: Ctx, id: string, input: unknown): Result =>
     const { payment } = completeBody.parse(input);
     const row = mustFind(ctx, id);
     const request = JSON.parse(row.request) as CheckoutRequest;
-    const missing = live(row) ? gone(ctx, request) : [];
+    if (!live(row)) throw invalidState("Checkout is not ready for complete"); // before deriving: a finished checkout's variants may be gone
+    const missing = gone(ctx, request);
     if (missing.length) return ok(errorBody(ctx, missing));
     const d = derived(ctx, request); // gate on the fresh status: the stored one may predate this platform's negotiation
-    if (!live(row) || (row.status !== "ready_for_complete" && d.status !== "ready_for_complete")) throw invalidState("Checkout is not ready for complete");
+    if (row.status !== "ready_for_complete" && d.status !== "ready_for_complete") throw invalidState("Checkout is not ready for complete");
     const inst = payment.instruments[0];
     if (inst.handler_id !== "mock_pay") throw new ProtocolError(400, "invalid_request", `Unsupported payment handler ${inst.handler_id}`);
     if (d.status !== "ready_for_complete") { // stock changed since the last write; nothing charged
@@ -129,13 +145,14 @@ export const complete = (ctx: Ctx, id: string, input: unknown): Result =>
       return ok(view(ctx, row, [{ type: "error", code: "payment_declined", content: "Payment was declined", severity: "recoverable" }]));
     }
     const orderId = `ord_${randomUUID()}`;
-    ctx.db.transaction(() => {
+    const body = ctx.db.transaction(() => {
       for (const l of request.line_items) ctx.db.prepare("UPDATE variants SET stock = stock - ? WHERE id = ?").run(l.quantity, l.item.id);
       place(ctx, orderId, id, d);
       ctx.db.prepare("UPDATE checkouts SET order_id = ?, status = 'completed' WHERE id = ?").run(orderId, id);
+      return freeze(ctx, id);
     })();
     notify(ctx, orderId);
-    return ok(view(ctx, find(ctx, id)!));
+    return ok(body);
   });
 
 export const cancel = (ctx: Ctx, id: string): Result =>
@@ -143,5 +160,5 @@ export const cancel = (ctx: Ctx, id: string): Result =>
     const row = mustFind(ctx, id);
     if (row.order_id) throw invalidState("Checkout is already completed");
     ctx.db.prepare("UPDATE checkouts SET canceled = 1, status = 'canceled' WHERE id = ?").run(id);
-    return ok(view(ctx, find(ctx, id)!));
+    return ok(freeze(ctx, id));
   });
