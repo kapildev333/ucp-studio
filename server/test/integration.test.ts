@@ -118,3 +118,26 @@ describe("variant order is insertion order", () => {
     expect((await request(app).get("/merchant-admin/catalog")).body).toEqual(exported);
   });
 });
+
+describe("oversized JSON bodies", () => {
+  const big = (n: number) => "x".repeat(n);
+  it("REST mounts answer 413 payload_too_large", async () => {
+    const app = mk();
+    const ucp = await request(app).post("/ucp/catalog/search").set(AGENT).send({ query: big(150_000) });
+    expect(ucp.status).toBe(413);
+    expect(ucp.body).toEqual({ code: "payload_too_large", content: "Request body is too large" });
+    expect(ucp.headers["request-id"]).toBeTruthy();
+    const api = await request(app).post("/api/inspect").send({ url: big(150_000) });
+    expect([api.status, api.body.code]).toEqual([413, "payload_too_large"]);
+    const admin = await imp(app, { products: [{ title: "Mug", description: big(11 * 1024 * 1024), variants: [{ sku: "A", title: "V", price: 1, stock: 1 }] }] });
+    expect([admin.status, admin.body.code]).toEqual([413, "payload_too_large"]);
+  });
+  it("MCP answers a JSON-RPC -32600 error with HTTP 200", async () => {
+    const res = await request(mk()).post("/ucp/mcp").send({ jsonrpc: "2.0", id: 7, method: "ping", params: { pad: big(150_000) } });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      jsonrpc: "2.0", id: null,
+      error: { code: -32600, message: "Request body is too large", data: { code: "payload_too_large", content: "Request body is too large" } },
+    });
+  });
+});

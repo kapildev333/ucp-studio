@@ -1,6 +1,7 @@
-import express, { Router } from "express";
+import express, { Router, type ErrorRequestHandler } from "express";
 import { z } from "zod";
 import type { Db } from "../db.js";
+import { TOO_LARGE } from "../ucp.js";
 import * as catalog from "./catalog-service.js";
 import * as checkout from "./checkout-service.js";
 import * as orders from "./order-service.js";
@@ -70,7 +71,7 @@ export const mcpRouter = ({ cache, ...deps }: { db: Db; baseUrl: string; fetch: 
   }
 
   const r = Router();
-  // ponytail: 100kb default body limit and no batch support; raise/loop if a client needs it
+  // ponytail: 100kb default body limit (over it: -32600 payload_too_large below) and no batch support; raise/loop if a client needs it
   r.post("/mcp", express.text({ type: () => true }), async (req, res) => {
     const reply = (id: unknown, e: RpcError) => void res.json({ jsonrpc: "2.0", id, error: { code: e.code, message: e.message, ...(e.data !== undefined && { data: e.data }) } });
     let msg: unknown;
@@ -95,6 +96,10 @@ export const mcpRouter = ({ cache, ...deps }: { db: Db; baseUrl: string; fetch: 
       reply(m.id, new RpcError(-32603, "Internal error"));
     }
   });
+  // A body over the limit is a JSON-RPC error (HTTP 200, like the others), not the REST envelope.
+  r.use("/mcp", ((err, _req, res, next) => err?.type === "entity.too.large"
+    ? void res.json({ jsonrpc: "2.0", id: null, error: { code: -32600, message: TOO_LARGE, data: { code: "payload_too_large", content: TOO_LARGE } } })
+    : next(err)) as ErrorRequestHandler);
   r.all("/mcp", (_req, res) => void res.status(405).set("Allow", "POST").end());
   return r;
 };
