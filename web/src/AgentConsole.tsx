@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { checkoutBody, connect as connectMerchant, money, openSession, stepOf, type Address, type Buyer, type Connection, type J, type Op, type Session, type Step, type Trace as T, type Transport } from "./api";
+import { checkoutBody, connect as connectMerchant, editQty, mergeCaps, money, openSession, stepOf, type Address, type Buyer, type Connection, type J, type Op, type Session, type Step, type Trace as T, type Transport } from "./api";
 import { OrderPanel } from "./OrderPanel";
 import { Trace } from "./Trace";
 
-type Line = { id: string; title: string; price: number; qty: number };
+type Line = { id: string; title: string; price: number; qty: number | "" }; // "" while the field is being edited; validated on blur and submit
 const STATES = ["incomplete", "ready_for_complete", "completed", "canceled"];
 // Third-party merchants may omit fields; fill the ones the UI dereferences so a bad response never blanks the app.
 const safeProduct = (p: J): J => ({
@@ -52,7 +52,7 @@ export function AgentConsole() {
       setBusy(false);
     }
   }
-  const seen = (b: J) => b?.ucp && setCaps(Array.isArray(b.ucp.capabilities) ? b.ucp.capabilities : []);
+  const seen = (b: J) => b?.ucp && setCaps((p) => mergeCaps(p, b.ucp.capabilities));
   const found = (b: J) => setProducts((Array.isArray(b.products) ? b.products : []).filter((p: J) => p && typeof p === "object").map(safeProduct));
   // One UCP operation on the active session; transport details live in api.ts.
   const ucp = (op: Op, args: J, onOk: (b: J) => void) =>
@@ -94,10 +94,10 @@ export function AgentConsole() {
   };
 
   const applyCheckout = (b: J) => {
-    setMsgs(b.messages ?? []);
+    setMsgs(b.messages ?? []); // arrays are guaranteed by normalize() in api.ts
     if (b.id) setCheckout({ ...b, totals: Array.isArray(b.totals) ? b.totals : [] });
   };
-  const body = (opt?: string, withAddress = true) => checkoutBody(cart, buyer, addr, opt, withAddress);
+  const body = (opt?: string, withAddress = true) => checkoutBody(cart.map((l) => ({ id: l.id, qty: l.qty || 1 })), buyer, addr, opt, withAddress);
   const start = () => ucp("create_checkout", { checkout: body(undefined, false) }, applyCheckout);
   const update = (opt = group?.selected_option_id) => ucp("update_checkout", { id: checkout.id, checkout: body(opt) }, applyCheckout);
   const pay = () =>
@@ -116,9 +116,9 @@ export function AgentConsole() {
   function add(p: J) {
     const v = p.variants.find((x: J) => x.id === (picks[p.id] ?? p.variants.find((y: J) => y.availability.available)?.id));
     if (!v) return;
-    setCart((c) => (c.some((l) => l.id === v.id) ? c.map((l) => (l.id === v.id ? { ...l, qty: l.qty + 1 } : l)) : [...c, { id: v.id, title: `${p.title} · ${v.title}`, price: v.price.amount, qty: 1 }]));
+    setCart((c) => (c.some((l) => l.id === v.id) ? c.map((l) => (l.id === v.id ? { ...l, qty: (l.qty || 1) + 1 } : l)) : [...c, { id: v.id, title: `${p.title} · ${v.title}`, price: v.price.amount, qty: 1 }]));
   }
-  const setQty = (id: string, qty: number) => setCart((c) => (qty < 1 ? c.filter((l) => l.id !== id) : c.map((l) => (l.id === id ? { ...l, qty } : l))));
+  const setQty = (id: string, qty: number | "") => setCart((c) => (qty === 0 ? c.filter((l) => l.id !== id) : c.map((l) => (l.id === id ? { ...l, qty } : l))));
 
   const Msgs = ({ step }: { step: Step }) => (
     <>
@@ -212,8 +212,8 @@ export function AgentConsole() {
           {cart.map((l) => (
             <div className="line" key={l.id}>
               <span className="grow">{l.title}</span>
-              <input type="number" min={1} aria-label={`Quantity of ${l.title}`} value={l.qty} disabled={!!checkout && !open} onChange={(e) => setQty(l.id, Math.max(1, Math.floor(Number(e.target.value)) || 1))} />
-              <span className="mono amt">{money(l.price * l.qty)}</span>
+              <input type="number" min={1} aria-label={`Quantity of ${l.title}`} value={l.qty} disabled={!!checkout && !open} onChange={(e) => setQty(l.id, editQty(e.target.value))} onBlur={() => l.qty === "" && setQty(l.id, 1)} />
+              <span className="mono amt">{money(l.price * (l.qty || 1))}</span>
               <button aria-label={`Remove ${l.title}`} disabled={open} onClick={() => setQty(l.id, 0)}>×</button>
             </div>
           ))}

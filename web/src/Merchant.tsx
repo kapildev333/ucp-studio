@@ -1,8 +1,35 @@
 import { useEffect, useState } from "react";
-import { getCatalog, importCatalog, money, resetCatalog, type J } from "./api";
+import { fulfillmentStatus, getCatalog, getOrders, importCatalog, money, resetCatalog, shipOrder, type J } from "./api";
 import { download, parseCatalogImport } from "./export";
 
 const counts = (r: J) => `${r.imported.products} products, ${r.imported.variants} variants`;
+
+const totalOf = (o: J) => (Array.isArray(o.totals) ? o.totals : []).find((t: J) => t?.type === "total")?.amount;
+
+export function OrdersTable({ orders, busyId, onShip }: { orders: J[]; busyId?: string; onShip: (id: string) => void }) {
+  return (
+    <table className="steps">
+      <caption className="sr">Orders</caption>
+      <thead>
+        <tr><th scope="col">Order</th><th scope="col">Created</th><th scope="col" className="num">Total</th><th scope="col">Fulfillment</th><th scope="col"><span className="sr">Actions</span></th></tr>
+      </thead>
+      <tbody>
+        {orders.map((o) => {
+          const st = fulfillmentStatus(o);
+          return (
+            <tr key={o.id}>
+              <td className="mono">{o.id}</td>
+              <td className="mono small">{o.created_at}</td>
+              <td className="num">{totalOf(o) === undefined ? "" : money(totalOf(o))}</td>
+              <td>{st}</td>
+              <td>{st !== "fulfilled" && <button disabled={busyId === o.id} aria-label={`Ship ${o.id}`} onClick={() => onShip(o.id)}>Ship</button>}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
 
 export function Merchant() {
   const [products, setProducts] = useState<J[] | null>(null);
@@ -14,6 +41,30 @@ export function Merchant() {
   const [replace, setReplace] = useState(false);
   const [importErrors, setImportErrors] = useState<string[]>([]);
   const [status, setStatus] = useState("");
+  const [orders, setOrders] = useState<J[] | null>(null);
+  const [orderError, setOrderError] = useState("");
+  const [shipping, setShipping] = useState("");
+
+  async function loadOrders() {
+    try {
+      setOrders((await getOrders()).orders);
+      setOrderError("");
+    } catch (e) {
+      setOrderError((e as Error).message);
+    }
+  }
+  async function ship(id: string) {
+    setShipping(id);
+    try {
+      await shipOrder(id);
+      await loadOrders();
+    } catch (e) {
+      setOrderError(`Ship ${id}: ${(e as Error).message}`); // 409 invalid_state, 403 forbidden
+      await loadOrders();
+    } finally {
+      setShipping("");
+    }
+  }
 
   async function load() {
     setLoadError("");
@@ -25,8 +76,9 @@ export function Merchant() {
   }
   useEffect(() => {
     void load();
-    // Panes mount at page load; refresh on arriving so stock changed in the Agent Console is not stale.
-    const on = () => { if (location.hash === "#merchant") void load(); };
+    void loadOrders();
+    // Panes mount at page load; refresh on arriving so stock/orders changed in the Agent Console are not stale.
+    const on = () => { if (location.hash === "#merchant") { void load(); void loadOrders(); } };
     addEventListener("hashchange", on);
     return () => removeEventListener("hashchange", on);
   }, []);
@@ -107,6 +159,16 @@ export function Merchant() {
           </table>
         </>
       )}
+
+      <div className="merchant-sec">
+        <div className="row">
+          <h2 className="grow">Orders</h2>
+          <button onClick={loadOrders}>Refresh</button>
+        </div>
+        {orderError && <div className="banner error" role="alert">{orderError}</div>}
+        {orders && orders.length === 0 && <div className="empty">No orders yet. Complete a checkout in the Agent Console.</div>}
+        {orders && orders.length > 0 && <OrdersTable orders={orders} busyId={shipping} onShip={ship} />}
+      </div>
 
       <div className="merchant-sec">
         <h2>Import</h2>

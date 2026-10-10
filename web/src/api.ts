@@ -40,16 +40,21 @@ async function errorOf(res: Response, what: string): Promise<Error> {
   return new Error(d?.content ?? `${what} returned HTTP ${res.status}`);
 }
 
-export async function inspect(url: string): Promise<J> {
+const UNREACHABLE = "Cannot reach the Studio API. Is the dev server running?";
+
+// The one request path for Studio / back-office JSON calls: network failure and non-2xx become Errors.
+async function request(send: Promise<Response>, what: string): Promise<J> {
   let res: Response;
   try {
-    res = await post("/api/inspect", { url });
+    res = await send;
   } catch {
-    throw new Error("Cannot reach the Studio API. Is the server running on 127.0.0.1:4000?");
+    throw new Error(UNREACHABLE);
   }
-  if (!res.ok) throw await errorOf(res, "Inspect");
+  if (!res.ok) throw await errorOf(res, what);
   return res.json();
 }
+
+export const inspect = (url: string): Promise<J> => request(post("/api/inspect", { url }), "Inspect");
 
 let seq = 0;
 // Sends one merchant call through /api/proxy and records it in the wire trace (also when it fails).
@@ -62,7 +67,7 @@ export async function call(onTrace: (t: Trace) => void, method: "GET" | "POST" |
   try {
     res = await post("/api/proxy", { method, url, body });
   } catch {
-    throw failed("Cannot reach the Studio API. Is the server running on 127.0.0.1:4000?");
+    throw failed(UNREACHABLE);
   }
   if (!res.ok) throw failed((await errorOf(res, "Proxy")).message);
   const d = await res.json();
@@ -123,6 +128,14 @@ function rpcFailure(r: { status: number; body: J }): UcpError | undefined {
   if (r.status !== 200) return new UcpError(`MCP endpoint returned HTTP ${r.status}`, undefined, r.status);
 }
 
+// Third-party merchants may send non-arrays or null entries where the UI maps/finds; fix them where responses enter the UI.
+const LISTS = new Set(["messages", "totals", "line_items", "methods", "groups", "options"]);
+export function normalize(v: J): J {
+  if (Array.isArray(v)) return v.map(normalize);
+  if (!v || typeof v !== "object") return v;
+  return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, LISTS.has(k) ? (Array.isArray(x) ? x.filter((e) => e && typeof e === "object").map(normalize) : []) : normalize(x)]));
+}
+
 // Pure: proxy response -> UCP body, or throws UcpError.
 export function parseResponse(transport: Transport, r: { status: number; body: J }): J {
   const b = r.body;
@@ -139,7 +152,7 @@ export function parseResponse(transport: Transport, r: { status: number; body: J
     const ms: J[] = Array.isArray(out.messages) ? out.messages : [];
     throw new UcpError(ms.map((m) => `${m?.code ?? "error"} ${m?.content ?? ""}`.trim()).join("; ") || "error", ms[0]?.code);
   }
-  return out;
+  return normalize(out);
 }
 
 export type Connection = { endpoints: { rest?: string; mcp?: string }; agentProfile: string };
@@ -200,27 +213,29 @@ export function sameOrigin(merchantUrl: string, origin: string): boolean {
 // Pure: the url when it is http(s), else undefined (blocks javascript: and friends in merchant-supplied hrefs).
 export const safeHttpUrl = (u: unknown): string | undefined => (typeof u === "string" && /^https?:\/\//i.test(u) ? u : undefined);
 
-export async function runConformance(body: { url: string; transport: "rest" | "mcp"; allow_complete: boolean }): Promise<J> {
-  let res: Response;
-  try {
-    res = await post("/api/conformance", body);
-  } catch {
-    throw new Error("Cannot reach the Studio API. Is the server running on 127.0.0.1:4000?");
-  }
-  if (!res.ok) throw await errorOf(res, "Conformance");
-  return res.json();
+export const runConformance = (body: { url: string; transport: "rest" | "mcp"; allow_complete: boolean }): Promise<J> => request(post("/api/conformance", body), "Conformance");
+
+export const getCatalog = (): Promise<J> => request(fetch("/merchant-admin/catalog"), "Catalog");
+export const importCatalog = (body: { replace: boolean; products: J[] }): Promise<J> => request(post("/merchant-admin/catalog/import", body), "Import");
+export const resetCatalog = (): Promise<J> => request(post("/merchant-admin/catalog/reset", {}), "Reset");
+export const getOrders = (): Promise<J> => request(fetch("/merchant-admin/orders"), "Orders");
+export const shipOrder = (id: string): Promise<J> => request(post(`/merchant-admin/orders/${enc(id)}/ship`, {}), "Ship");
+
+// Pure: "unfulfilled" | "partial" | "fulfilled" from an order's line items (tolerates missing fields).
+export function fulfillmentStatus(o: J): "unfulfilled" | "partial" | "fulfilled" {
+  const lines: J[] = Array.isArray(o?.line_items) ? o.line_items.filter(Boolean) : [];
+  const done = lines.filter((l) => l.status === "fulfilled").length;
+  return lines.length && done === lines.length ? "fulfilled" : done ? "partial" : "unfulfilled";
 }
 
-async function merchantAdmin(send: Promise<Response>, what: string): Promise<J> {
-  let res: Response;
-  try {
-    res = await send;
-  } catch {
-    throw new Error("Cannot reach the Studio API. Is the server running on 127.0.0.1:4000?");
-  }
-  if (!res.ok) throw await errorOf(res, what);
-  return res.json();
-}
-export const getCatalog = (): Promise<J> => merchantAdmin(fetch("/merchant-admin/catalog"), "Catalog");
-export const importCatalog = (body: { replace: boolean; products: J[] }): Promise<J> => merchantAdmin(post("/merchant-admin/catalog/import", body), "Import");
-export const resetCatalog = (): Promise<J> => merchantAdmin(post("/merchant-admin/catalog/reset", {}), "Reset");
+// Pure: quantity field text -> positive integer, or "" so the field can be empty while typing (validated on blur / submit).
+export const editQty = (raw: string): number | "" => {
+  const n = Math.floor(Number(raw));
+  return raw.trim() !== "" && n >= 1 ? n : "";
+};
+
+// Pure: capabilities seen so far plus any new ones (by name), so the chip row does not flip per operation.
+export const mergeCaps = (prev: { name: string; version: string }[], next: unknown): { name: string; version: string }[] => {
+  const add = (Array.isArray(next) ? next : []).filter((c) => c && typeof c.name === "string" && !prev.some((p) => p.name === c.name));
+  return add.length ? [...prev, ...add] : prev;
+};

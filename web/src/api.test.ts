@@ -125,7 +125,7 @@ describe("parseResponse", () => {
   });
   it("returns a checkout that carries messages and an id", () => {
     const b = { id: "c1", ucp: { status: "error" }, messages: [{ code: "x", content: "y" }] };
-    expect(parseResponse("rest", { status: 200, body: b })).toBe(b);
+    expect(parseResponse("rest", { status: 200, body: b })).toEqual(b);
   });
 });
 

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { AgentConsole } from "./AgentConsole";
 import { Conformance } from "./Conformance";
 import { Inspector } from "./Inspector";
+import { ErrorBoundary } from "./ErrorBoundary";
 import { Merchant } from "./Merchant";
 
 const TABS = [
@@ -32,10 +33,10 @@ export function App() {
         <span className="muted mono small">localhost only</span>
       </header>
       <main>
-        <div hidden={tab !== "inspector"}><Inspector /></div>
-        <div hidden={tab !== "console"}><AgentConsole /></div>
-        <div hidden={tab !== "conformance"}><Conformance /></div>
-        <div hidden={tab !== "merchant"}><Merchant /></div>
+        <div hidden={tab !== "inspector"}><ErrorBoundary label="Inspector"><Inspector /></ErrorBoundary></div>
+        <div hidden={tab !== "console"}><ErrorBoundary label="AgentConsole"><AgentConsole /></ErrorBoundary></div>
+        <div hidden={tab !== "conformance"}><ErrorBoundary label="Conformance"><Conformance /></ErrorBoundary></div>
+        <div hidden={tab !== "merchant"}><ErrorBoundary label="Merchant"><Merchant /></ErrorBoundary></div>
       </main>
     </>
   );
