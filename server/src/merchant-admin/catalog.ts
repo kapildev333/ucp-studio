@@ -38,7 +38,7 @@ export const merchantAdminRouter = (db: Db) => {
     req.method !== "GET" && req.header("Sec-Fetch-Site") === "cross-site" ? protocolError(res, 403, "forbidden", "Cross-site requests are not allowed") : next());
 
   r.get("/catalog", (_req, res) => {
-    const variants = db.prepare("SELECT * FROM variants ORDER BY id").all() as any[];
+    const variants = db.prepare("SELECT * FROM variants ORDER BY rowid").all() as any[];
     const products = (db.prepare("SELECT * FROM products ORDER BY position").all() as any[]).map((p) => ({
       id: p.id, title: p.title, description: p.description, categories: JSON.parse(p.categories),
       variants: variants.filter((v) => v.product_id === p.id).map((v) => ({

@@ -101,3 +101,20 @@ describe("finished checkouts are frozen", () => {
     expect((await request(app).post(`/ucp/checkout-sessions/${c.id}/complete`).set(k()).send(pay)).body.status).toBe("completed");
   });
 });
+
+describe("variant order is insertion order", () => {
+  it("back office and UCP return variants as imported; export -> replace-import -> export is identical", async () => {
+    const app = mk();
+    const ids = ["var_z", "var_a", "var_m"];
+    await imp(app, { products: [{ id: "prod_o", title: "Ordered", variants: ids.map((id, i) => ({ id, sku: ["S9", "S1", "S5"][i], title: id, price: 100, stock: 1 })) }] });
+    const exported = (await request(app).get("/merchant-admin/catalog")).body;
+    expect(exported.products.at(-1).variants.map((v: any) => v.id)).toEqual(ids);
+    const s = await request(app).post("/ucp/catalog/search").set(AGENT).send({ query: "ordered" });
+    expect(s.body.products[0].variants.map((v: any) => v.id)).toEqual(ids);
+    const p = await request(app).post("/ucp/catalog/product").set(AGENT).send({ id: "prod_o" });
+    expect(p.body.product.variants.map((v: any) => v.id)).toEqual(ids);
+    expect((await mcp(app, "get_product", { id: "prod_o" })).product.variants.map((v: any) => v.id)).toEqual(ids);
+    expect((await imp(app, { ...exported, replace: true })).status).toBe(200);
+    expect((await request(app).get("/merchant-admin/catalog")).body).toEqual(exported);
+  });
+});

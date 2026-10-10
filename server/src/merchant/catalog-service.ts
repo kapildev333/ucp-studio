@@ -20,7 +20,7 @@ const productBody = z.object({ id: z.string() });
 
 // ponytail: loads the whole catalog per request and filters in JS; fine for a demo seed, push into SQL for real catalogs
 const all = (db: Db) => {
-  const variants = db.prepare("SELECT * FROM variants ORDER BY id").all() as any[];
+  const variants = db.prepare("SELECT * FROM variants ORDER BY rowid").all() as any[];
   return (db.prepare("SELECT * FROM products ORDER BY position").all() as any[]).map((p) => {
     const vs = variants.filter((v) => v.product_id === p.id);
     const prices = vs.map((v) => v.price);
