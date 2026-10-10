@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
-import { protocolError } from "../ucp.js";
 import { restEndpoint } from "./inspect.js";
 
 type Obj = Record<string, any>;
@@ -13,21 +12,23 @@ export type Exchange = {
   duration_ms: number;
 };
 export type StepResult = { id: string; title: string; status: Status; detail: string; exchanges: Exchange[] };
-export type Res = { status: number; body: any };
+export type Res = { status: number; body: any; error?: { code: number; message: string } }; // error: a JSON-RPC error (MCP only)
 
-// One method per UCP operation. Only the REST mapping exists; an MCP mapping would implement the same shape.
+// One method per UCP operation; restClient and mcpClient implement the same shape.
+// rejectable: the step expects a rejection, so an MCP JSON-RPC error is returned as Res.error instead of thrown.
 export type Client = {
   profile(): Promise<Res>;
   search(body: unknown, opts?: { noAgent?: boolean }): Promise<Res>;
   create(body: unknown, key: string): Promise<Res>;
-  get(id: string, opts?: { noAgent?: boolean }): Promise<Res>;
-  update(id: string, body: unknown, key: string): Promise<Res>;
+  get(id: string, opts?: { noAgent?: boolean; rejectable?: boolean }): Promise<Res>;
+  update(id: string, body: unknown, key: string, opts?: { rejectable?: boolean }): Promise<Res>;
   complete(id: string, body: unknown, key: string): Promise<Res>;
   cancel(id: string, key: string): Promise<Res>;
   getOrder(id: string): Promise<Res>;
 };
 export type Ctx = {
   client: Client;
+  transport: "rest" | "mcp";
   state: { exchanges: Exchange[]; endpoint?: string }; // exchanges is swapped per step by the runner
   profile?: Obj;
   variantId?: string;
@@ -87,8 +88,8 @@ export const checkAgentProbe = (status: number): Out =>
   : status >= 400 ? out("pass", `Rejected with ${status}`)
   : out("warn", `Request without UCP-Agent was accepted (${status})`);
 
-// Rejected = 4xx, or a 200-style body whose ucp.status is "error".
-const rejected = (r: Res) => (r.status >= 400 && r.status < 500) || r.body?.ucp?.status === "error";
+// Rejected = a JSON-RPC error, 4xx, or a 200-style body whose ucp.status is "error".
+const rejected = (r: Res) => !!r.error || (r.status >= 400 && r.status < 500) || r.body?.ucp?.status === "error";
 
 // ---- runner -----------------------------------------------------------------------------------
 
@@ -114,36 +115,39 @@ export async function runSteps(steps: Step[], ctx: Ctx): Promise<StepResult[]> {
 
 // ---- REST client ------------------------------------------------------------------------------
 
+// One recorded HTTP exchange (10 s timeout); network failures are recorded with status 0 and thrown.
+async function exchange(state: Ctx["state"], method: string, url: string, headers: Record<string, string>, body?: unknown): Promise<Res> {
+  const t0 = performance.now();
+  const request = { method, url, headers, body };
+  let res: Response, text: string;
+  try {
+    res = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(10000) });
+    text = await res.text();
+  } catch (e: any) {
+    const msg = `${method} ${url}: ${e?.cause?.code ?? (e?.name === "TimeoutError" ? "timeout after 10s" : e?.message ?? e)}`;
+    state.exchanges.push({ request, response: { status: 0, headers: {}, body: msg }, duration_ms: Math.round(performance.now() - t0) });
+    throw new Error(msg);
+  }
+  let parsed: any = text;
+  try {
+    parsed = JSON.parse(text);
+  } catch {}
+  state.exchanges.push({
+    request,
+    response: { status: res.status, headers: Object.fromEntries(res.headers), body: parsed },
+    duration_ms: Math.round(performance.now() - t0),
+  });
+  return { status: res.status, body: parsed };
+}
+
 export function restClient(origin: string, baseUrl: string, state: Ctx["state"]): Client {
-  const call = async (method: string, url: string, opts: { body?: unknown; key?: string; noAgent?: boolean } = {}): Promise<Res> => {
-    const headers: Record<string, string> = {
+  const call = (method: string, url: string, opts: { body?: unknown; key?: string; noAgent?: boolean } = {}): Promise<Res> =>
+    exchange(state, method, url, {
       ...(!opts.noAgent && { "UCP-Agent": `profile="${baseUrl}/api/agent-profile"` }),
       "Request-Id": randomUUID(),
       ...(opts.body !== undefined && { "Content-Type": "application/json" }),
       ...(opts.key && { "Idempotency-Key": opts.key }),
-    };
-    const t0 = performance.now();
-    const request = { method, url, headers, body: opts.body };
-    let res: Response, text: string;
-    try {
-      res = await fetch(url, { method, headers, body: opts.body === undefined ? undefined : JSON.stringify(opts.body), signal: AbortSignal.timeout(10000) });
-      text = await res.text();
-    } catch (e: any) {
-      const msg = `${method} ${url}: ${e?.cause?.code ?? (e?.name === "TimeoutError" ? "timeout after 10s" : e?.message ?? e)}`;
-      state.exchanges.push({ request, response: { status: 0, headers: {}, body: msg }, duration_ms: Math.round(performance.now() - t0) });
-      throw new Error(msg);
-    }
-    let body: any = text;
-    try {
-      body = JSON.parse(text);
-    } catch {}
-    state.exchanges.push({
-      request,
-      response: { status: res.status, headers: Object.fromEntries(res.headers), body },
-      duration_ms: Math.round(performance.now() - t0),
-    });
-    return { status: res.status, body };
-  };
+    }, opts.body);
   const ep = () => {
     if (!state.endpoint) throw new Error("No REST endpoint known");
     return state.endpoint;
@@ -161,9 +165,38 @@ export function restClient(origin: string, baseUrl: string, state: Ctx["state"])
   };
 }
 
+// MCP mapping (JSON-RPC tools/call). Duplicated from the merchant on purpose: studio never imports merchant code.
+export function mcpClient(origin: string, baseUrl: string, state: Ctx["state"]): Client {
+  let n = 0;
+  const tool = async (name: string, args: Obj, o: { key?: string; rejectable?: boolean } = {}): Promise<Res> => {
+    if (!state.endpoint) throw new Error("No MCP endpoint known");
+    const meta = { "ucp-agent": { profile: `${baseUrl}/api/agent-profile` }, ...(o.key && { "idempotency-key": o.key }) };
+    const rpc = { jsonrpc: "2.0", id: ++n, method: "tools/call", params: { name, arguments: { meta, ...args } } };
+    const r = await exchange(state, "POST", state.endpoint, { "Content-Type": "application/json", "Request-Id": randomUUID() }, rpc);
+    const e = r.body?.error;
+    if (e) {
+      if (o.rejectable) return { status: r.status, body: undefined, error: e };
+      throw new Error(`${name}: JSON-RPC error ${e.code}: ${e.message}`);
+    }
+    if (r.status !== 200 || !r.body?.result) throw new Error(`${name}: expected a JSON-RPC result, got HTTP ${r.status}`);
+    return { status: r.status, body: r.body.result.structuredContent };
+  };
+  return {
+    profile: () => exchange(state, "GET", `${origin}/.well-known/ucp`, { "UCP-Agent": `profile="${baseUrl}/api/agent-profile"`, "Request-Id": randomUUID() }),
+    search: (body) => tool("search_catalog", body as Obj),
+    create: (body, key) => tool("create_checkout", { checkout: body }, { key }),
+    get: (id, o) => tool("get_checkout", { id }, o),
+    update: (id, body, key, o) => tool("update_checkout", { id, checkout: body }, { key, ...o }),
+    complete: (id, body, key) => tool("complete_checkout", { id, checkout: body }, { key }),
+    cancel: (id, key) => tool("cancel_checkout", { id }, { key }),
+    getOrder: (id) => tool("get_order", { id }),
+  };
+}
+
 // ---- steps ------------------------------------------------------------------------------------
 
 const hasCap = (ctx: Ctx, name: string) => !!ctx.profile?.ucp?.capabilities?.[name];
+const REST_ONLY = "REST only: MCP carries no headers or idempotency replay semantics to probe";
 const MOCK = "dev.ucpstudio.mock_pay";
 const isMoney = (v: unknown) => Number.isInteger(v);
 
@@ -177,16 +210,17 @@ export const STEPS: Step[] = [
       if (!isObj(u) || typeof u.version !== "string") return out("fail", "ucp.version is missing");
       if (!isObj(u.services)) return out("fail", "ucp.services must be an object");
       if (!isObj(u.payment_handlers)) return out("fail", "ucp.payment_handlers must be an object");
-      const endpoint = restEndpoint(r.body);
-      if (!endpoint) return out("fail", "No service offers the rest transport with an absolute http(s) endpoint");
+      const endpoint = restEndpoint(r.body, ctx.transport);
+      if (!endpoint) return out("fail", `No service offers the ${ctx.transport} transport with an absolute http(s) endpoint`);
       ctx.profile = r.body;
       ctx.state.endpoint = endpoint.replace(/\/+$/, "");
-      return out("pass", `rest endpoint ${ctx.state.endpoint}. Use the Inspector for the full static checklist.`);
+      return out("pass", `${ctx.transport} endpoint ${ctx.state.endpoint}. Use the Inspector for the full static checklist.`);
     },
   },
   {
     id: "agent_header", title: "Missing UCP-Agent is rejected", needs: ["profile"],
     async run(ctx) {
+      if (ctx.transport === "mcp") return out("skip", REST_ONLY);
       // ponytail: without the catalog capability, a GET of a nonexistent checkout stands in; 4xx there may be a plain 404, upgrade by probing another operation
       const r = hasCap(ctx, "dev.ucp.shopping.catalog.search")
         ? await ctx.client.search({ pagination: { limit: 1 } }, { noAgent: true })
@@ -219,7 +253,7 @@ export const STEPS: Step[] = [
       const body = { line_items: [{ item: { id: item }, quantity: 1 }] };
       const key = randomUUID();
       const r = await ctx.client.create(body, key);
-      if (r.status !== 201) return out("fail", `Create returned ${r.status}, expected 201`);
+      if (ctx.transport === "rest" && r.status !== 201) return out("fail", `Create returned ${r.status}, expected 201`);
       const c = r.body;
       if (!c?.ucp?.version) return out("fail", "Response lacks ucp.version");
       if (typeof c.id !== "string" || !c.id) return out("fail", "Response lacks id");
@@ -248,6 +282,7 @@ export const STEPS: Step[] = [
   {
     id: "idempotent_replay", title: "Idempotent replay", needs: ["create_checkout"],
     async run(ctx) {
+      if (ctx.transport === "mcp") return out("skip", REST_ONLY);
       const r = await ctx.client.create(ctx.createBody, ctx.createKey!);
       return r.body?.id === ctx.checkout!.id ? out("pass", "Replay returned the same checkout") : out("warn", `Replay returned ${r.status} with id ${JSON.stringify(r.body?.id)}, expected ${ctx.checkout!.id}`);
     },
@@ -255,6 +290,7 @@ export const STEPS: Step[] = [
   {
     id: "idempotency_conflict", title: "Idempotency key conflict", needs: ["create_checkout"],
     async run(ctx) {
+      if (ctx.transport === "mcp") return out("skip", REST_ONLY);
       const other = { line_items: [{ item: ctx.createBody!.line_items[0].item, quantity: 2 }] };
       const r = await ctx.client.create(other, ctx.createKey!);
       return r.status === 409 ? out("pass", "Reused key with a different body returned 409") : out("warn", `Expected 409, got ${r.status}`);
@@ -263,8 +299,8 @@ export const STEPS: Step[] = [
   {
     id: "unknown_checkout", title: "Unknown checkout is not found", needs: ["profile"],
     async run(ctx) {
-      const r = await ctx.client.get("ucp-studio-nonexistent");
-      if (rejected(r)) return out("pass", `Rejected (${r.status})`);
+      const r = await ctx.client.get("ucp-studio-nonexistent", { rejectable: true });
+      if (rejected(r)) return out("pass", `Rejected (${r.error ? `JSON-RPC ${r.error.code}` : r.status})`);
       return out("fail", `Expected a 4xx or ucp.status "error", got ${r.status}${r.body?.id ? " with a checkout" : ""}`);
     },
   },
@@ -316,7 +352,7 @@ export const STEPS: Step[] = [
       if (c.body?.status !== "canceled") return out("fail", `Cancel returned ${c.status} with status ${JSON.stringify(c.body?.status)}`);
       const g = await ctx.client.get(id);
       if (g.body?.status !== "canceled") return out("fail", `Get after cancel shows ${JSON.stringify(g.body?.status)}`);
-      const u = await ctx.client.update(id, ctx.createBody, randomUUID());
+      const u = await ctx.client.update(id, ctx.createBody, randomUUID(), { rejectable: true });
       return rejected(u) ? out("pass", "Canceled; get confirms; update rejected") : out("fail", `Update after cancel was not rejected (${u.status})`);
     },
   },
@@ -342,16 +378,15 @@ export const conformanceRouter = (baseUrl: string) => {
   r.post("/conformance", async (req, res, next) => {
     try {
       const body = schema.parse(req.body);
-      if (body.transport === "mcp") return protocolError(res, 400, "invalid_request", "MCP conformance is not available yet");
       const origin = new URL(body.url).origin;
       const started = new Date();
       const t0 = performance.now();
       const state: Ctx["state"] = { exchanges: [] };
-      const ctx: Ctx = { client: restClient(origin, baseUrl, state), state, itemId: body.item_id, allowComplete: body.allow_complete };
+      const ctx: Ctx = { client: (body.transport === "mcp" ? mcpClient : restClient)(origin, baseUrl, state), transport: body.transport, state, itemId: body.item_id, allowComplete: body.allow_complete };
       const steps = await runSteps(STEPS, ctx);
       const summary = { pass: 0, fail: 0, warn: 0, skip: 0 };
       for (const s of steps) summary[s.status]++;
-      res.json({ origin, transport: "rest", started_at: started.toISOString(), duration_ms: Math.round(performance.now() - t0), steps, summary });
+      res.json({ origin, transport: body.transport, started_at: started.toISOString(), duration_ms: Math.round(performance.now() - t0), steps, summary });
     } catch (e) {
       next(e);
     }

@@ -121,11 +121,7 @@ describe("conformance over REST", () => {
     expect(create.exchanges[0].request.body.line_items[0].item.id).toBe("var_4_1");
   });
 
-  it("rejects mcp and invalid bodies with 400 invalid_request", async () => {
-    const mcp = await run({ url: s.base, transport: "mcp" });
-    expect(mcp.status).toBe(400);
-    expect(mcp.body.code).toBe("invalid_request");
-    expect(mcp.body.content).toMatch(/MCP conformance is not available/);
+  it("rejects invalid bodies and unknown transports with 400 invalid_request", async () => {
     for (const body of [{}, { url: "nope" }, { url: "ftp://x.com" }, { url: s.base, transport: "soap" }, { url: s.base, allow_complete: "yes" }]) {
       const res = await run(body);
       expect(res.status).toBe(400);
@@ -150,6 +146,48 @@ describe("conformance over REST", () => {
     expect(prof.exchanges[0].response.status).toBe(0);
     expect(prof.exchanges[0].response.body).toBe(prof.detail);
     expect(prof.exchanges[0].request.headers["UCP-Agent"]).toContain("/api/agent-profile");
+  });
+});
+
+describe("conformance end to end, both transports", () => {
+  let s: Awaited<ReturnType<typeof listen>>;
+  let app: ReturnType<typeof createApp>;
+  beforeAll(async () => {
+    s = await listen((req, res) => app(req, res));
+    app = createApp({ dbPath: ":memory:", baseUrl: s.base });
+  });
+  afterAll(() => new Promise((r) => s.server.close(r)));
+
+  const base = {
+    profile: "pass", agent_header: "pass", catalog_search: "pass", create_checkout: "pass", totals_arithmetic: "pass",
+    messages_shape: "pass", status_consistency: "pass", get_checkout: "pass", idempotent_replay: "pass", idempotency_conflict: "pass",
+    unknown_checkout: "pass", complete_purchase: "skip", get_order: "skip", cancel_checkout: "pass",
+  };
+  const done = { complete_purchase: "pass", get_order: "pass", cancel_checkout: "skip" };
+  const restOnly = { agent_header: "skip", idempotent_replay: "skip", idempotency_conflict: "skip" };
+  const count = (m: Record<string, string>) => {
+    const c = { pass: 0, fail: 0, warn: 0, skip: 0 } as Record<string, number>;
+    for (const v of Object.values(m)) c[v]++;
+    return c;
+  };
+  const cases: [string, "rest" | "mcp", boolean, Record<string, string>][] = [
+    ["REST", "rest", false, base],
+    ["REST + allow_complete", "rest", true, { ...base, ...done }],
+    ["MCP", "mcp", false, { ...base, ...restOnly }],
+    ["MCP + allow_complete", "mcp", true, { ...base, ...restOnly, ...done }],
+  ];
+  it.each(cases)("%s: every step", async (_n, transport, allow_complete, expected) => {
+    const res = await request(app).post("/api/conformance").send({ url: s.base, transport, allow_complete });
+    expect(res.status).toBe(200);
+    expect(res.body.transport).toBe(transport);
+    expect(statuses(res.body)).toEqual(expected);
+    expect(res.body.summary).toEqual(count(expected));
+    if (transport === "mcp") {
+      const create = res.body.steps.find((x: { id: string }) => x.id === "create_checkout");
+      expect(create.exchanges[0].request).toMatchObject({ method: "POST", url: `${s.base}/ucp/mcp`, body: { jsonrpc: "2.0", method: "tools/call", params: { name: "create_checkout" } } });
+      expect(create.exchanges[0].request.body.params.arguments.meta["ucp-agent"].profile).toBe(`${s.base}/api/agent-profile`);
+      expect(create.exchanges[0].response.body.result.structuredContent.id).toMatch(/\S/);
+    }
   });
 });
 
@@ -189,3 +227,52 @@ describe("deliberately broken merchant", () => {
     expect(st.unknown_checkout).toBe("fail");
   });
 });
+
+describe("fake merchants, probes", () => {
+  let host: Awaited<ReturnType<typeof listen>>;
+  let app: ReturnType<typeof createApp>;
+  beforeAll(async () => {
+    host = await listen((req, res) => app(req, res));
+    app = createApp({ dbPath: ":memory:", baseUrl: host.base });
+  });
+  afterAll(() => new Promise((r) => host.server.close(r)));
+  const profile = (base: string, transport: string, endpoint: string) => ({
+    ucp: { version: "2026-08-25", services: { "dev.ucp.shopping": [{ transport, endpoint }] }, capabilities: { "dev.ucp.shopping.catalog.search": [{ version: "2026-08-25" }] }, payment_handlers: {} },
+  });
+  const conf = async (f: express.Express, transport: string) => {
+    const fake = await listen(f);
+    try {
+      return (await request(app).post("/api/conformance").send({ url: fake.base, transport })).body;
+    } finally {
+      await new Promise((r) => fake.server.close(r));
+    }
+  };
+
+  it("REST: a 500 on the header-less probe is fail", async () => {
+    const f = express();
+    f.get("/.well-known/ucp", (req, res) => res.json(profile("", "rest", `http://${req.headers.host}/ucp`)));
+    f.use((_req, res) => res.status(500).send("broken"));
+    const body = await conf(f, "rest");
+    const step = body.steps.find((x: { id: string }) => x.id === "agent_header");
+    expect(step.status).toBe("fail");
+    expect(step.detail).toMatch(/server error \(500\)/);
+  });
+
+  it("MCP: a JSON-RPC error on the unknown checkout is a pass; an error where a body was expected fails the step", async () => {
+    const f = express();
+    f.get("/.well-known/ucp", (req, res) => res.json(profile("", "mcp", `http://${req.headers.host}/mcp`)));
+    f.post("/mcp", express.json(), (req, res) => {
+      const { id, params } = req.body;
+      if (params.name === "get_checkout") return res.json({ jsonrpc: "2.0", id, error: { code: -32000, message: "Checkout not found" } });
+      res.json({ jsonrpc: "2.0", id, error: { code: -32603, message: "kaput" } });
+    });
+    const body = await conf(f, "mcp");
+    const st = statuses(body);
+    expect(st.unknown_checkout).toBe("pass");
+    expect(st).toMatchObject({ profile: "pass", agent_header: "skip", catalog_search: "fail" });
+    const cat = body.steps.find((x: { id: string }) => x.id === "catalog_search");
+    expect(cat.detail).toContain("-32603");
+    expect(cat.detail).toContain("kaput");
+  });
+});
+

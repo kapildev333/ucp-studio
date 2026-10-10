@@ -17,11 +17,11 @@ const isHttpUrl = (v: unknown) => {
 const ucpOf = (p: Obj): Obj => (isObj(p.ucp) ? p.ucp : {});
 const mk = (id: string, title: string, status: Check["status"], detail: string): Check => ({ id, title, status, detail });
 
-// All service entries (any service name) offering the rest transport.
-const restEntries = (p: Obj): Obj[] =>
-  Object.values(ucpOf(p).services ?? {}).flatMap((v) => (Array.isArray(v) ? v : [])).filter((e) => isObj(e) && e.transport === "rest");
+// All service entries (any service name) offering the transport.
+const restEntries = (p: Obj, transport = "rest"): Obj[] =>
+  Object.values(ucpOf(p).services ?? {}).flatMap((v) => (Array.isArray(v) ? v : [])).filter((e) => isObj(e) && e.transport === transport);
 // Trailing slashes are stripped once here so callers can append "/path" safely.
-export const restEndpoint = (p: Obj): string | undefined => restEntries(p).find((e) => isHttpUrl(e.endpoint))?.endpoint.replace(/\/+$/, "");
+export const restEndpoint = (p: Obj, transport = "rest"): string | undefined => restEntries(p, transport).find((e) => isHttpUrl(e.endpoint))?.endpoint.replace(/\/+$/, "");
 
 // Blocks DNS rebinding: a page that rebinds its hostname to 127.0.0.1 would otherwise reach the open forwarder same-origin.
 // ponytail: hostname allowlist only; binding to a non-loopback address or a custom local hostname needs this list extended.
