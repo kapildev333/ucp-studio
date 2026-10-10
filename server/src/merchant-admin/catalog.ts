@@ -6,7 +6,7 @@ import { seedCatalog, type Db } from "../db.js";
 
 const variant = z.object({
   id: z.string().min(1).optional(), sku: z.string().min(1), title: z.string().min(1),
-  price: z.number().int().min(0), stock: z.number().int().min(0),
+  price: z.number().int().min(0).max(100_000_000), stock: z.number().int().min(0).max(1_000_000), // keeps price * quantity a safe integer
   options: z.array(z.object({ name: z.string(), label: z.string() })).default([]),
 });
 const product = z.object({
@@ -29,9 +29,14 @@ const importBody = z.object({ replace: z.boolean().default(false), products: z.a
 
 const slug = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
-// ponytail: header-based CSRF check only (browsers always send Sec-Fetch-Site); real auth is out of scope
+// Writes need the custom header only the web console sends: a hostile page cannot add it without a (failing) CORS preflight, and the
+// server's own outbound fetches (inspect, conformance, proxy, webhooks) never send it, so a hostile merchant profile cannot aim them here.
+// Sec-Fetch-Site additionally refuses cross-site and same-site browser writes. ponytail: real auth is out of scope.
 export const crossSiteGuard: RequestHandler = (req, res, next) =>
-  req.method !== "GET" && req.header("Sec-Fetch-Site") === "cross-site" ? protocolError(res, 403, "forbidden", "Cross-site requests are not allowed") : next();
+  req.method === "GET" ? next()
+  : req.header("X-UCP-Studio") !== "1" || ["cross-site", "same-site"].includes(req.header("Sec-Fetch-Site") ?? "")
+    ? protocolError(res, 403, "forbidden", "Back-office writes need the X-UCP-Studio header from the Studio web app")
+    : next();
 
 // ponytail: no auth, localhost demo only; add real auth before exposing this beyond the developer's machine
 export const merchantAdminRouter = (db: Db) => {
@@ -68,6 +73,8 @@ export const merchantAdminRouter = (db: Db) => {
           variants++;
         }
       }
+      // A variant re-parented by this import can leave its old product empty; an empty product would break re-importing the export.
+      db.exec("DELETE FROM products WHERE id NOT IN (SELECT product_id FROM variants)");
     })();
     res.json({ imported: { products: body.products.length, variants } });
   });

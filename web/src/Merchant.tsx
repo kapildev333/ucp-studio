@@ -1,8 +1,48 @@
 import { useEffect, useState } from "react";
-import { getCatalog, importCatalog, money, resetCatalog, type J } from "./api";
+import { fulfillmentStatus, getCatalog, getOrders, importCatalog, money, resetCatalog, shipOrder, type J } from "./api";
 import { download, parseCatalogImport } from "./export";
 
-const counts = (r: J) => `${r.imported.products} products, ${r.imported.variants} variants`;
+const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
+const counts = (r: J) => `${plural(r.imported.products, "product")}, ${plural(r.imported.variants, "variant")}`;
+
+const totalOf = (o: J) => (Array.isArray(o.totals) ? o.totals : []).find((t: J) => t?.type === "total")?.amount;
+
+// Ships, then always reloads the list; returns the error text (409 invalid_state, 403) to show once the reload is done, or "".
+export async function shipThenReload(id: string, ship: (id: string) => Promise<unknown>, reload: () => Promise<void>): Promise<string> {
+  let err = "";
+  try {
+    await ship(id);
+  } catch (e) {
+    err = `Ship ${id}: ${(e as Error).message}`;
+  }
+  await reload();
+  return err;
+}
+
+export function OrdersTable({ orders, busyId, onShip }: { orders: J[]; busyId?: string; onShip: (id: string) => void }) {
+  return (
+    <table className="steps">
+      <caption className="sr">Orders</caption>
+      <thead>
+        <tr><th scope="col">Order</th><th scope="col">Created</th><th scope="col" className="num">Total</th><th scope="col">Fulfillment</th><th scope="col"><span className="sr">Actions</span></th></tr>
+      </thead>
+      <tbody>
+        {orders.map((o) => {
+          const st = fulfillmentStatus(o);
+          return (
+            <tr key={o.id}>
+              <td className="mono">{o.id}</td>
+              <td className="mono small">{o.created_at}</td>
+              <td className="num">{totalOf(o) === undefined ? "" : money(totalOf(o))}</td>
+              <td>{st}</td>
+              <td>{st !== "fulfilled" && <button disabled={busyId === o.id} aria-label={`Ship ${o.id}`} onClick={() => onShip(o.id)}>Ship</button>}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
 
 export function Merchant() {
   const [products, setProducts] = useState<J[] | null>(null);
@@ -14,6 +54,25 @@ export function Merchant() {
   const [replace, setReplace] = useState(false);
   const [importErrors, setImportErrors] = useState<string[]>([]);
   const [status, setStatus] = useState("");
+  const [importStatus, setImportStatus] = useState("");
+  const [orders, setOrders] = useState<J[] | null>(null);
+  const [orderError, setOrderError] = useState("");
+  const [shipping, setShipping] = useState("");
+
+  async function loadOrders() {
+    try {
+      setOrders((await getOrders()).orders);
+      setOrderError("");
+    } catch (e) {
+      setOrderError((e as Error).message);
+    }
+  }
+  async function ship(id: string) {
+    setShipping(id);
+    const err = await shipThenReload(id, shipOrder, loadOrders);
+    if (err) setOrderError(err); // after the reload, which clears the error banner
+    setShipping("");
+  }
 
   async function load() {
     setLoadError("");
@@ -25,8 +84,9 @@ export function Merchant() {
   }
   useEffect(() => {
     void load();
-    // Panes mount at page load; refresh on arriving so stock changed in the Agent Console is not stale.
-    const on = () => { if (location.hash === "#merchant") void load(); };
+    void loadOrders();
+    // Panes mount at page load; refresh on arriving so stock/orders changed in the Agent Console are not stale.
+    const on = () => { if (location.hash === "#merchant") { void load(); void loadOrders(); } };
     addEventListener("hashchange", on);
     return () => removeEventListener("hashchange", on);
   }, []);
@@ -50,10 +110,10 @@ export function Merchant() {
     e.preventDefault();
     setBusy(true);
     setImportErrors([]);
-    setStatus("");
+    setImportStatus("");
     try {
       const r = await importCatalog({ replace, products: parseCatalogImport(text) });
-      setStatus(`Imported ${counts(r)}`);
+      setImportStatus(`Imported ${counts(r)}`);
       await load();
     } catch (err) {
       // Server 400 content is "path: message; path: message"; ponytail: a message containing "; " itself splits too.
@@ -68,7 +128,7 @@ export function Merchant() {
     <section className="page">
       <h1>Merchant</h1>
       <p className="muted">Back-office for the built-in merchant only, not the URL typed in other tabs.</p>
-      <div className="row">
+      <div className="row toolbar">
         <h2 className="grow">Catalog</h2>
         <button onClick={load}>Refresh</button>
         <button disabled={!products} onClick={() => download("ucp-catalog.json", JSON.stringify({ products }, null, 2), "application/json")}>Download current catalog (.json)</button>
@@ -87,7 +147,7 @@ export function Merchant() {
       {products && products.length === 0 && <div className="empty">The catalog is empty. Import products or reset to the sample catalog.</div>}
       {products && products.length > 0 && (
         <>
-          <p className="muted small">{products.length} products, {variants} variants</p>
+          <p className="muted small">{plural(products.length, "product")}, {plural(variants, "variant")}</p>
           <table className="steps">
             <caption className="sr">Catalog variants</caption>
             <thead>
@@ -107,6 +167,16 @@ export function Merchant() {
           </table>
         </>
       )}
+
+      <div className="merchant-sec">
+        <div className="row toolbar">
+          <h2 className="grow">Orders</h2>
+          <button onClick={loadOrders}>Refresh</button>
+        </div>
+        {orderError && <div className="banner error" role="alert">{orderError}</div>}
+        {orders && orders.length === 0 && <div className="empty">No orders yet. Complete a checkout in the Agent Console.</div>}
+        {orders && orders.length > 0 && <OrdersTable orders={orders} busyId={shipping} onShip={ship} />}
+      </div>
 
       <div className="merchant-sec">
         <h2>Import</h2>
@@ -129,6 +199,7 @@ export function Merchant() {
           </label>
           <button className="primary" disabled={busy || !text.trim()}>{busy ? "Working…" : "Import"}</button>
         </form>
+        <div role="status" aria-live="polite">{importStatus && <div className="banner ok">{importStatus}</div>}</div>
         {importErrors.length > 0 && (
           <div className="banner error" role="alert">
             {importErrors.length === 1 ? <span className="mono">{importErrors[0]}</span> : <ul>{importErrors.map((m, i) => <li key={i} className="mono">{m}</li>)}</ul>}

@@ -2,17 +2,17 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { ProtocolError, type Ctx, type Result } from "./errors.js";
 import { envelopeFor, has, incompatible } from "./negotiate.js";
+import { PAYMENT_HANDLERS } from "./profile.js";
 import { notify, place } from "./order-service.js";
 import { derive, unknownItems, type CheckoutRequest, type Message, type Variant } from "./checkout-logic.js";
 
 const CHECKOUT = "dev.ucp.shopping.checkout";
 const FULFILLMENT = "dev.ucp.shopping.fulfillment";
-const HANDLERS = { "dev.ucpstudio.mock_pay": [{ id: "mock_pay", version: "2026-08-25" }] };
 const TTL_MS = 6 * 60 * 60 * 1000;
 
 const str = z.string().default("");
 const requestBody = z.object({
-  line_items: z.array(z.object({ item: z.object({ id: z.string() }), quantity: z.number().int().min(1) })).min(1),
+  line_items: z.array(z.object({ item: z.object({ id: z.string() }), quantity: z.number().int().min(1).max(10_000) })).min(1),
   buyer: z.object({ first_name: z.string().optional(), last_name: z.string().optional(), email: z.string().optional(), phone_number: z.string().optional() }).optional(),
   fulfillment: z.object({
     methods: z.array(z.object({
@@ -35,7 +35,7 @@ const canon = (v: unknown): string =>
   : v && typeof v === "object" ? `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canon((v as Record<string, unknown>)[k])}`).join(",")}}`
   : JSON.stringify(v) ?? "null";
 
-type Row = { id: string; request: string; status: string; canceled: number; order_id: string | null; created_at: string; expires_at: string; snapshot: string | null };
+type Row = { id: string; request: string; status: string; total: number; canceled: number; order_id: string | null; created_at: string; expires_at: string; snapshot: string | null };
 
 const lookup = (ctx: Ctx) => (id: string) => ctx.db.prepare("SELECT id, title, price, stock FROM variants WHERE id = ?").get(id) as Variant;
 const find = (ctx: Ctx, id: string) => ctx.db.prepare("SELECT * FROM checkouts WHERE id = ?").get(id) as Row | undefined;
@@ -44,6 +44,7 @@ const live = (row: Row) => !row.order_id && !row.canceled && row.expires_at > ne
 // Line items whose variant no longer exists (deleted by a catalog import since the last write).
 const gone = (ctx: Ctx, req: CheckoutRequest) => unknownItems(req, (id) => !!lookup(ctx)(id));
 const derived = (ctx: Ctx, req: CheckoutRequest) => derive(req, lookup(ctx), has(ctx.negotiated, FULFILLMENT));
+const totalOf = (d: { totals: { type: string; amount: number }[] }) => d.totals.find((t) => t.type === "total")!.amount;
 const ok = (body: unknown, status: 200 | 201 = 200): Result => ({ status, body });
 const invalidState = (content: string) => new ProtocolError(409, "invalid_state", content);
 
@@ -65,7 +66,7 @@ const view = (ctx: Ctx, row: Row, extra: Message[] = []) => {
     totals: d.totals,
     messages: done ? [] : [...d.messages, ...extra],
     links: [{ type: "terms_of_service", url: `${ctx.baseUrl}/terms` }, { type: "privacy_policy", url: `${ctx.baseUrl}/privacy` }],
-    payment: { instruments: [] }, payment_handlers: HANDLERS, expires_at: row.expires_at,
+    payment: { instruments: [] }, payment_handlers: PAYMENT_HANDLERS, expires_at: row.expires_at,
     ...(row.order_id && { order: { id: row.order_id, permalink_url: `${ctx.baseUrl}/orders/${row.order_id}` } }),
   };
 };
@@ -94,9 +95,12 @@ function idempotent(ctx: Ctx, op: string, id: string, input: unknown, run: () =>
     if (hit.fingerprint !== fingerprint) throw new ProtocolError(409, "idempotency_conflict", "Idempotency-Key was used with a different request");
     return { status: hit.status, body: JSON.parse(hit.body) };
   }
-  const result = run();
-  ctx.db.prepare("INSERT INTO idempotency VALUES (?,?,?,?)").run(key, fingerprint, result.status, JSON.stringify(result.body));
-  return result;
+  // One transaction with the operation itself, so a crash cannot leave the effect without its replay record.
+  return ctx.db.transaction(() => {
+    const result = run();
+    ctx.db.prepare("INSERT INTO idempotency VALUES (?,?,?,?)").run(key, fingerprint, result.status, JSON.stringify(result.body));
+    return result;
+  })();
 }
 
 export const create = (ctx: Ctx, input: unknown): Result =>
@@ -106,8 +110,9 @@ export const create = (ctx: Ctx, input: unknown): Result =>
     if (unknown.length) return ok(errorBody(ctx, unknown));
     const now = Date.now();
     const id = `chk_${randomUUID()}`;
-    ctx.db.prepare("INSERT INTO checkouts (id, request, status, created_at, expires_at) VALUES (?,?,?,?,?)")
-      .run(id, JSON.stringify(body), derived(ctx, body).status, new Date(now).toISOString(), new Date(now + TTL_MS).toISOString());
+    const d = derived(ctx, body);
+    ctx.db.prepare("INSERT INTO checkouts (id, request, status, total, created_at, expires_at) VALUES (?,?,?,?,?,?)")
+      .run(id, JSON.stringify(body), d.status, totalOf(d), new Date(now).toISOString(), new Date(now + TTL_MS).toISOString());
     return ok(view(ctx, find(ctx, id)!), 201);
   });
 
@@ -121,7 +126,8 @@ export const update = (ctx: Ctx, id: string, input: unknown): Result =>
     if (!live(row)) throw invalidState("Checkout is completed or canceled");
     const unknown = gone(ctx, body);
     if (unknown.length) return ok(errorBody(ctx, unknown));
-    ctx.db.prepare("UPDATE checkouts SET request = ?, status = ? WHERE id = ?").run(JSON.stringify(body), derived(ctx, body).status, id);
+    const d = derived(ctx, body);
+    ctx.db.prepare("UPDATE checkouts SET request = ?, status = ?, total = ? WHERE id = ?").run(JSON.stringify(body), d.status, totalOf(d), id);
     return ok(view(ctx, find(ctx, id)!));
   });
 
@@ -138,8 +144,17 @@ export const complete = (ctx: Ctx, id: string, input: unknown): Result =>
     const inst = payment.instruments[0];
     if (inst.handler_id !== "mock_pay") throw new ProtocolError(400, "invalid_request", `Unsupported payment handler ${inst.handler_id}`);
     if (d.status !== "ready_for_complete") { // stock changed since the last write; nothing charged
-      ctx.db.prepare("UPDATE checkouts SET status = 'incomplete' WHERE id = ?").run(id);
+      ctx.db.prepare("UPDATE checkouts SET status = 'incomplete', total = ? WHERE id = ?").run(totalOf(d), id);
       return ok(view(ctx, find(ctx, id)!));
+    }
+    // Repriced since the last write: the buyer never saw this total. Nothing charged; the new total is stored so the next Complete goes through.
+    // ponytail: only writes (and this branch) record the shown total, so a GET that already showed the new price still bounces the first Complete once.
+    if (totalOf(d) !== row.total) {
+      ctx.db.prepare("UPDATE checkouts SET total = ? WHERE id = ?").run(totalOf(d), id);
+      return ok(view(ctx, find(ctx, id)!, [{
+        type: "warning", code: "price_changed", severity: "requires_buyer_review",
+        content: `Prices changed since your last update: the total is now ${(totalOf(d) / 100).toFixed(2)} USD (was ${(row.total / 100).toFixed(2)}). Nothing was charged; review and complete again with a new Idempotency-Key (the same key replays this response).`,
+      }]));
     }
     if (inst.credential.token === "tok_decline") {
       return ok(view(ctx, row, [{ type: "error", code: "payment_declined", content: "Payment was declined", severity: "recoverable" }]));

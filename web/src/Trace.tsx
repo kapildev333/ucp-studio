@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { J, Trace as T } from "./api";
-import { download, toCurl, traceToMarkdown } from "./export";
+import { download, rpcLabel, toCurl, traceToMarkdown } from "./export";
 
 const pathOf = (u: string) => {
   try {
@@ -27,7 +27,7 @@ export function TraceEntry({ t }: { t: T }) {
       <details>
         <summary>
           <span className={`method ${t.method}`}>{t.method}</span>
-          <span className="path mono" title={t.url}>{pathOf(t.url)}</span>
+          <span className="path mono" title={t.url}>{rpcLabel(t.request) ?? pathOf(t.url)}</span>
           <span className={`status ${cls(t.status)}`}>{t.status ?? "ERR"}</span>
           <span className="muted mono small">{t.status === null ? "" : `${t.duration_ms}ms`}</span>
         </summary>

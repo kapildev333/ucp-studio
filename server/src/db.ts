@@ -3,10 +3,10 @@ import Database from "better-sqlite3";
 export type Db = Database.Database;
 
 // orders.snapshot is the order object as JSON (immutable except fulfillment); webhook_url is captured from the platform profile at Complete.
-// Checkout request state is stored as JSON; totals and messages are derived on read. `status` is the snapshot taken at the last write (Complete gates on it).
+// Checkout request state is stored as JSON; totals and messages are derived on read. `status` and `total` are the snapshot taken at the last write (Complete gates on status and refuses to charge a different total).
 // checkouts.snapshot is the response body (minus `ucp`) frozen at Complete/Cancel; once set, reads never touch the catalog again.
 // ponytail: no migrations; bumping SCHEMA_VERSION drops and recreates the transactional tables (orders, checkouts, idempotency), so that data is discarded. Real migrations if it must survive.
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS products (
   id TEXT PRIMARY KEY, handle TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL,
@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS variants (
   id TEXT PRIMARY KEY, product_id TEXT NOT NULL REFERENCES products(id), sku TEXT NOT NULL, title TEXT NOT NULL,
   description TEXT NOT NULL, price INTEGER NOT NULL, options TEXT NOT NULL, stock INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS checkouts (
-  id TEXT PRIMARY KEY, request TEXT NOT NULL, status TEXT NOT NULL, canceled INTEGER NOT NULL DEFAULT 0,
+  id TEXT PRIMARY KEY, request TEXT NOT NULL, status TEXT NOT NULL, total INTEGER NOT NULL, canceled INTEGER NOT NULL DEFAULT 0,
   order_id TEXT, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, snapshot TEXT);
 CREATE TABLE IF NOT EXISTS idempotency (
   key TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, status INTEGER NOT NULL, body TEXT NOT NULL);

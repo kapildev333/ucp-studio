@@ -6,7 +6,7 @@ import { AGENT, fakeFetch } from "./helpers.js";
 
 const mk = () => createApp({ dbPath: ":memory:", baseUrl: "http://127.0.0.1:4000", fetch: fakeFetch() });
 const catalog = async (app: any) => (await request(app).get("/merchant-admin/catalog")).body;
-const imp = (app: any, body: any) => request(app).post("/merchant-admin/catalog/import").send(body);
+const imp = (app: any, body: any) => request(app).post("/merchant-admin/catalog/import").set("X-UCP-Studio", "1").send(body);
 const v = (sku: string, extra: object = {}) => ({ sku, title: "V", price: 100, stock: 3, ...extra });
 const prod = (title = "Mug", variants: any[] = [v("MUG-1")], extra: object = {}) => ({ title, variants, ...extra });
 
@@ -114,7 +114,7 @@ describe("catalog reset", () => {
       .send({ payment: { instruments: [{ id: "i", handler_id: "mock_pay", type: "token", credential: { token: "tok_success" } }] } });
     const orderId = done.body.order.id;
     await imp(app, { replace: true, products: [prod()] });
-    const res = await request(app).post("/merchant-admin/catalog/reset");
+    const res = await request(app).post("/merchant-admin/catalog/reset").set("X-UCP-Studio", "1");
     expect(res.body).toEqual({ imported: { products: 8, variants: 15 } });
     expect(await catalog(app)).toEqual(seed);
     expect((await request(app).get(`/orders/${orderId}`)).status).toBe(200);
@@ -123,15 +123,16 @@ describe("catalog reset", () => {
 });
 
 describe("catalog hardening", () => {
-  it("rejects cross-site writes, allows same-site", async () => {
+  it("rejects cross-site and same-site writes, allows same-origin", async () => {
     const app = mk();
     await imp(app, { replace: true, products: [prod()] });
     const before = await catalog(app);
-    const bad = await request(app).post("/merchant-admin/catalog/reset").set("Sec-Fetch-Site", "cross-site");
+    const bad = await request(app).post("/merchant-admin/catalog/reset").set("X-UCP-Studio", "1").set("Sec-Fetch-Site", "cross-site");
     expect(bad.status).toBe(403);
     expect(bad.body.code).toBe("forbidden");
+    expect((await request(app).post("/merchant-admin/catalog/reset").set("X-UCP-Studio", "1").set("Sec-Fetch-Site", "same-site")).status).toBe(403);
     expect(await catalog(app)).toEqual(before);
-    expect((await request(app).post("/merchant-admin/catalog/reset").set("Sec-Fetch-Site", "same-site")).status).toBe(200);
+    expect((await request(app).post("/merchant-admin/catalog/reset").set("X-UCP-Studio", "1").set("Sec-Fetch-Site", "same-origin")).status).toBe(200);
   });
   it("rejects duplicate product ids and duplicate variant ids", async () => {
     const app = mk();

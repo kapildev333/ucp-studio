@@ -72,7 +72,7 @@ export const mcpRouter = ({ cache, ...deps }: { db: Db; baseUrl: string; fetch: 
 
   const r = Router();
   // ponytail: 100kb default body limit (over it: -32600 payload_too_large below) and no batch support; raise/loop if a client needs it
-  r.post("/mcp", express.text({ type: () => true }), async (req, res) => {
+  r.post("/mcp", express.text({ type: "application/json" }), async (req, res) => {
     const reply = (id: unknown, e: RpcError) => void res.json({ jsonrpc: "2.0", id, error: { code: e.code, message: e.message, ...(e.data !== undefined && { data: e.data }) } });
     let msg: unknown;
     try {

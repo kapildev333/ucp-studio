@@ -60,7 +60,7 @@ export function Conformance() {
         <label className="notice">
           <input type="checkbox" checked={complete} onChange={(e) => setComplete(e.target.checked)} /> Also complete a test purchase (mock payment only)
         </label>
-        <p className="muted small notice">A run creates and then cancels one checkout session on the target merchant.</p>
+        <p className="muted small notice">{complete ? "A run creates one checkout session on the target merchant and completes it with the mock payment handler." : "A run creates and then cancels one checkout session on the target merchant."}</p>
       </form>
       {error && <div className="banner error" role="alert">{error}</div>}
       {!result && !error && !busy && <div className="empty">Enter a merchant URL and press Run to start the conformance suite.</div>}

@@ -3,7 +3,7 @@ import { ProtocolError, type Result } from "./errors.js";
 
 type Entry = { version: string; extends?: string };
 type Cap = { name: string; version: string };
-// What the platform sent: its capabilities object, raw (Task 2 reads webhook config from it).
+// What the platform sent: its capabilities object, raw (order-service reads the webhook config from it).
 export type Negotiated = { capabilities: Cap[]; platformCapabilities: Record<string, unknown> };
 export type ProfileCache = Map<string, { at: number; profile: Record<string, any> }>;
 
