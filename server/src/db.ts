@@ -38,21 +38,23 @@ const SEED: Seed[] = [
   ["wool-socks", "Wool Socks", "Pair of merino wool socks.", "Accessories", [["Medium", 1200, ["Size", "M"], 60]]],
 ];
 
+export function seedCatalog(db: Db) {
+  const addP = db.prepare("INSERT INTO products VALUES (?,?,?,?,?,?)");
+  const addV = db.prepare("INSERT INTO variants VALUES (?,?,?,?,?,?,?,?)");
+  db.transaction(() => {
+    SEED.forEach(([handle, title, desc, cat, variants], i) => {
+      const pid = `prod_${i + 1}`;
+      addP.run(pid, handle, title, desc, JSON.stringify([cat]), i);
+      variants.forEach(([vt, price, [name, label], stock], j) =>
+        addV.run(`var_${i + 1}_${j + 1}`, pid, `${handle}-${j + 1}`.toUpperCase(), `${title} - ${vt}`, desc, price, JSON.stringify([{ name, label }]), stock));
+    });
+  })();
+}
+
 export function openDb(path: string): Db {
   const db = new Database(path);
   db.pragma("foreign_keys = ON");
   db.exec(SCHEMA);
-  if (!db.prepare("SELECT 1 FROM products LIMIT 1").get()) {
-    const addP = db.prepare("INSERT INTO products VALUES (?,?,?,?,?,?)");
-    const addV = db.prepare("INSERT INTO variants VALUES (?,?,?,?,?,?,?,?)");
-    db.transaction(() => {
-      SEED.forEach(([handle, title, desc, cat, variants], i) => {
-        const pid = `prod_${i + 1}`;
-        addP.run(pid, handle, title, desc, JSON.stringify([cat]), i);
-        variants.forEach(([vt, price, [name, label], stock], j) =>
-          addV.run(`var_${i + 1}_${j + 1}`, pid, `${handle}-${j + 1}`.toUpperCase(), `${title} - ${vt}`, desc, price, JSON.stringify([{ name, label }]), stock));
-      });
-    })();
-  }
+  if (!db.prepare("SELECT 1 FROM products LIMIT 1").get()) seedCatalog(db);
   return db;
 }
