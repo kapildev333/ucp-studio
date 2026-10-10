@@ -120,3 +120,59 @@ describe("I1: Host allowlist everywhere, MCP is JSON-only", () => {
     expect(ok.body.result.structuredContent.status).toBeDefined();
   });
 });
+
+describe("I2: Complete never charges a total the buyer has not seen", () => {
+  const addr = { street_address: "1 Main St", address_locality: "Springfield", address_region: "CA", postal_code: "94000", address_country: "US" };
+  const full = {
+    line_items: [{ item: { id: "var_4_1" }, quantity: 2 }], buyer: { email: "a@b.co" },
+    fulfillment: { methods: [{ type: "shipping", destinations: [addr], groups: [{ selected_option_id: "standard" }] }] },
+  };
+  const pay = { payment: { instruments: [{ id: "i1", handler_id: "mock_pay", type: "card", credential: { token: "tok_ok" } }] } };
+  const total = (b: any) => b.totals.find((t: any) => t.type === "total").amount;
+  const mk = () => createApp({ dbPath: ":memory:", baseUrl: "http://127.0.0.1:4000", fetch: fakeFetch() });
+  const reprice = (app: any, price: number) =>
+    request(app).post("/merchant-admin/catalog/import").set(STUDIO).send({ products: [{ id: "prod_4", title: "Classic Tee", variants: [{ id: "var_4_1", sku: "T", title: "Small", price, stock: 40 }] }] });
+  const stock = async (app: any) => (await request(app).get("/merchant-admin/catalog")).body.products.find((p: any) => p.id === "prod_4").variants[0].stock;
+  let n = 0;
+  const key = () => ({ ...AGENT, "Idempotency-Key": `i2-${++n}` });
+
+  it("REST: a repriced checkout bounces with a message, then completes at the new total", async () => {
+    const app = mk();
+    const c = (await request(app).post("/ucp/checkout-sessions").set(key()).send(full)).body;
+    expect(total(c)).toBe(2 * 1999 + 500 + Math.round(2 * 1999 * 0.08));
+    await reprice(app, 9000);
+    const bounced = await request(app).post(`/ucp/checkout-sessions/${c.id}/complete`).set(key()).send(pay);
+    expect(bounced.status).toBe(200);
+    expect(bounced.body.status).not.toBe("completed");
+    expect(bounced.body.order).toBeUndefined();
+    expect(bounced.body.messages.map((m: any) => m.code)).toContain("price_changed");
+    expect(total(bounced.body)).not.toBe(total(c));
+    expect((await request(app).get("/merchant-admin/orders")).body.orders).toHaveLength(0);
+    expect(await stock(app)).toBe(40);
+    const done = await request(app).post(`/ucp/checkout-sessions/${c.id}/complete`).set(key()).send(pay);
+    expect(done.body.status).toBe("completed");
+    expect(total(done.body)).toBe(total(bounced.body));
+    expect(await stock(app)).toBe(38);
+  });
+
+  it("MCP: same behaviour", async () => {
+    const app = mk();
+    const call = async (name: string, args: object, k?: string) => (await request(app).post("/ucp/mcp").send({
+      jsonrpc: "2.0", id: 1, method: "tools/call",
+      params: { name, arguments: { meta: { "ucp-agent": { profile: "http://127.0.0.1:4000/api/agent-profile" }, ...(k && { "idempotency-key": k }) }, ...args } },
+    })).body.result.structuredContent;
+    const c = await call("create_checkout", { checkout: full });
+    await reprice(app, 9000);
+    const bounced = await call("complete_checkout", { id: c.id, checkout: pay }, "m1");
+    expect(bounced.status).not.toBe("completed");
+    expect(bounced.messages.map((m: any) => m.code)).toContain("price_changed");
+    expect(await stock(app)).toBe(40);
+    expect((await call("complete_checkout", { id: c.id, checkout: pay }, "m2")).status).toBe("completed");
+  });
+
+  it("an unchanged price still completes in one call", async () => {
+    const app = mk();
+    const c = (await request(app).post("/ucp/checkout-sessions").set(key()).send(full)).body;
+    expect((await request(app).post(`/ucp/checkout-sessions/${c.id}/complete`).set(key()).send(pay)).body.status).toBe("completed");
+  });
+});
