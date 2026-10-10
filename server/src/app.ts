@@ -22,7 +22,7 @@ export function createApp({ dbPath, baseUrl }: { dbPath: string; baseUrl: string
   ucp.use((_req, res) => protocolError(res, 404, "not_found", "No such UCP endpoint"));
   app.use("/ucp", ucp);
   app.use("/api", express.json(), inspectRouter(baseUrl), proxyRouter(baseUrl), conformanceRouter(baseUrl));
-  app.use("/merchant-admin", express.json(), merchantAdminRouter(db));
+  app.use("/merchant-admin", express.json({ limit: "10mb" }), merchantAdminRouter(db));
   app.use(errorHandler);
   return app;
 }
