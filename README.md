@@ -110,3 +110,7 @@ Ceilings in the code:
 - `UCP-Agent` is parsed with a regex, not a full RFC 8941 parser.
 - Conformance: without the catalog capability, a GET of a nonexistent checkout stands in for a probe, so a 4xx there may be a plain 404. REST-only probes are skipped over MCP.
 - Web: wire JSON is untyped; the Agent Console falls back to `<origin>/api/agent-profile` as the agent profile when the proxy does not echo one, which only resolves while the dev server runs; it uses a fresh idempotency key per call, so the UI cannot retry idempotently; catalog import errors split on `"; "`, so a message containing it splits too.
+
+## Contributing
+
+This is a personal project and does not accept pull requests or issues. Fork it or download it freely.

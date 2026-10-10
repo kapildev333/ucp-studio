@@ -1,0 +1,17 @@
+# This repo does not accept pull requests. Closes any PR not opened by the owner or Dependabot.
+# pull_request_target is required so the token can write on fork PRs; nothing from the PR is checked out or run.
+name: close-external-prs
+on:
+  pull_request_target:
+    types: [opened, reopened]
+permissions:
+  pull-requests: write
+jobs:
+  close:
+    if: github.event.pull_request.user.login != github.repository_owner && github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh pr close "$PR" --repo "$GITHUB_REPOSITORY" --comment "This project does not accept pull requests. You are welcome to fork it."
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
