@@ -3,7 +3,7 @@ import http from "node:http";
 import express from "express";
 import request from "supertest";
 import { createApp } from "../src/app.js";
-import { checkTotals, checkMessages, checkStatusConsistency, runSteps, STEPS, type Ctx, type Step } from "../src/studio/conformance.js";
+import { checkTotals, checkAgentProbe, checkMessages, checkStatusConsistency, runSteps, STEPS, type Ctx, type Step } from "../src/studio/conformance.js";
 
 const listen = async (handler: http.RequestListener) => {
   const server = http.createServer(handler);
@@ -26,6 +26,21 @@ describe("pure helpers", () => {
     expect(checkTotals(t(["total", 1], ["total", 1])).status).toBe("fail");
     expect(checkTotals(t(["subtotal", 100], ["mystery", 5], ["total", 999])).status).toBe("warn");
     expect(checkTotals([...t(["subtotal", 100], ["total", 100]), { type: "mystery", amount: 5, display_text: "Mystery" }]).status).toBe("pass");
+  });
+  it("totals: unknown type with display_text is excluded but the equation is still asserted", () => {
+    const x = { type: "mystery", amount: 5, display_text: "Mystery" };
+    expect(checkTotals([...t(["subtotal", 100], ["total", 999]), x]).status).toBe("fail");
+    expect(checkTotals([...t(["subtotal", 100], ["total", 100]), x]).status).toBe("pass");
+    expect(checkTotals(t(["subtotal", 100], ["mystery", 5], ["total", 100])).status).toBe("warn");
+  });
+  it("agent probe: 5xx fails, 4xx passes, 2xx/3xx warns", () => {
+    const f = checkAgentProbe(503);
+    expect(f.status).toBe("fail");
+    expect(f.detail).toMatch(/server error.*503/);
+    expect(checkAgentProbe(500).detail).not.toMatch(/accepted/);
+    expect(checkAgentProbe(401).status).toBe("pass");
+    expect(checkAgentProbe(200)).toMatchObject({ status: "warn", detail: expect.stringContaining("accepted") });
+    expect(checkAgentProbe(302).status).toBe("warn");
   });
   it("message shape", () => {
     expect(checkMessages(undefined).status).toBe("pass");

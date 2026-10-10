@@ -81,6 +81,12 @@ export function checkStatusConsistency(c: Obj): Out {
   return out("pass", `status ${c.status} is consistent with messages`);
 }
 
+// The header-less probe: 4xx is the right answer, 5xx means the merchant broke on it, anything else accepted it.
+export const checkAgentProbe = (status: number): Out =>
+  status >= 500 ? out("fail", `Request without UCP-Agent got a server error (${status})`)
+  : status >= 400 ? out("pass", `Rejected with ${status}`)
+  : out("warn", `Request without UCP-Agent was accepted (${status})`);
+
 // Rejected = 4xx, or a 200-style body whose ucp.status is "error".
 const rejected = (r: Res) => (r.status >= 400 && r.status < 500) || r.body?.ucp?.status === "error";
 
@@ -185,7 +191,7 @@ export const STEPS: Step[] = [
       const r = hasCap(ctx, "dev.ucp.shopping.catalog.search")
         ? await ctx.client.search({ pagination: { limit: 1 } }, { noAgent: true })
         : await ctx.client.get("ucp-studio-nonexistent", { noAgent: true });
-      return r.status >= 400 && r.status < 500 ? out("pass", `Rejected with ${r.status}`) : out("warn", `Request without UCP-Agent was accepted (${r.status})`);
+      return checkAgentProbe(r.status);
     },
   },
   {
