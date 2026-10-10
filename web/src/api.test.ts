@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { importCatalog, resetCatalog, shipOrder, checkoutBody, money, orderSummary, safeHttpUrl, sameOrigin, stepOf } from "./api";
+import { clearWebhooks, importCatalog, resetCatalog, shipOrder, checkoutBody, money, orderSummary, safeHttpUrl, sameOrigin, stepOf } from "./api";
 
 const addr = { street_address: "1 Main St", address_locality: "Austin", address_region: "TX", postal_code: "78701", address_country: "US" };
 const buyer = { first_name: "", last_name: "", email: "", phone_number: "" };
@@ -22,6 +22,10 @@ describe("back-office writes", () => {
     expect(f.mock.calls.map((c: any) => [c[0], c[1].headers["X-UCP-Studio"]])).toEqual([
       ["/merchant-admin/catalog/import", "1"], ["/merchant-admin/catalog/reset", "1"], ["/merchant-admin/orders/ord_1/ship", "1"],
     ]);
+  });
+  it("a 204 No Content answer resolves without parsing JSON", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 204 })));
+    await expect(clearWebhooks()).resolves.toBeUndefined();
   });
 });
 

@@ -153,7 +153,7 @@ export const complete = (ctx: Ctx, id: string, input: unknown): Result =>
       ctx.db.prepare("UPDATE checkouts SET total = ? WHERE id = ?").run(totalOf(d), id);
       return ok(view(ctx, find(ctx, id)!, [{
         type: "warning", code: "price_changed", severity: "requires_buyer_review",
-        content: `Prices changed since your last update: the total is now ${(totalOf(d) / 100).toFixed(2)} USD (was ${(row.total / 100).toFixed(2)}). Nothing was charged; review and complete again.`,
+        content: `Prices changed since your last update: the total is now ${(totalOf(d) / 100).toFixed(2)} USD (was ${(row.total / 100).toFixed(2)}). Nothing was charged; review and complete again with a new Idempotency-Key (the same key replays this response).`,
       }]));
     }
     if (inst.credential.token === "tok_decline") {

@@ -48,7 +48,7 @@ async function request(send: Promise<Response>, what: string): Promise<J> {
     throw new Error(UNREACHABLE);
   }
   if (!res.ok) throw await errorOf(res, what);
-  return res.json();
+  return res.status === 204 ? undefined : res.json();
 }
 
 export const inspect = (url: string): Promise<J> => request(post("/api/inspect", { url }), "Inspect");
