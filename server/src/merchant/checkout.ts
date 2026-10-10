@@ -17,7 +17,7 @@ const requestBody = z.object({
     methods: z.array(z.object({
       type: z.literal("shipping"),
       destinations: z.array(z.object({
-        street_address: str, address_locality: str, address_region: str, postal_code: str, address_country: z.string().default("US"),
+        street_address: z.string().min(1), address_locality: z.string().min(1), address_region: str, postal_code: z.string().min(1), address_country: z.string().default("US"),
       })),
       groups: z.array(z.object({ selected_option_id: z.string().optional() })).optional(),
     })),

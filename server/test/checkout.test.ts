@@ -151,6 +151,21 @@ describe("business outcomes", () => {
     expect((await get(c.id)).body.messages).toEqual([]);
     expect((await post(`${BASE}/${c.id}/complete`, pay())).body.status).toBe("completed");
   });
+  it("sums duplicate lines of one variant against stock", async () => {
+    const body = ready("var_5_2", 4); // stock 7
+    body.line_items.push({ item: { id: "var_5_2" }, quantity: 4 });
+    const c = await create(body);
+    expect(c.status).toBe("incomplete");
+    expect(c.messages.filter((m: any) => m.code === "out_of_stock").map((m: any) => m.path)).toEqual(["$.line_items[0].quantity", "$.line_items[1].quantity"]);
+    const ok = ready("var_5_2", 3);
+    ok.line_items.push({ item: { id: "var_5_2" }, quantity: 3 });
+    const a = await create(ok);
+    const b = await create(ok); // each fits alone (6 <= 7), together oversell
+    await post(`${BASE}/${a.id}/complete`, pay());
+    const res = await post(`${BASE}/${b.id}/complete`, pay());
+    expect(res.body.status).toBe("incomplete");
+    expect(res.body.messages.filter((m: any) => m.code === "out_of_stock")).toHaveLength(2);
+  });
   it("re-checks stock at complete", async () => {
     const a = await create(ready("var_2_2", 8)); // stock 8
     const b = await create(ready("var_2_2", 8));
@@ -171,6 +186,18 @@ describe("protocol errors and state", () => {
       expect(res.status).toBe(400);
       expect(res.body.code).toBe("invalid_request");
     }
+  });
+  it("rejects destinations missing street, locality or postal code", async () => {
+    for (const k of ["street_address", "address_locality", "postal_code"]) {
+      const body = ready();
+      body.fulfillment.methods[0].destinations[0] = { ...addr, [k]: "" };
+      expect((await post(BASE, body)).body.code, k).toBe("invalid_request");
+    }
+    const body = ready();
+    body.fulfillment.methods[0].destinations[0] = {} as any;
+    expect((await post(BASE, body)).status).toBe(400);
+    body.fulfillment.methods[0].destinations[0] = { ...addr, address_region: "" };
+    expect((await post(BASE, body)).status).toBe(201);
   });
   it("404s on unknown ids for every op", async () => {
     expect((await get("chk_x")).status).toBe(404);

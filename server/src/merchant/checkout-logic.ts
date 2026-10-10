@@ -61,8 +61,10 @@ export function derive(req: CheckoutRequest, lookup: (id: string) => Variant) {
     { type: "total", amount: subtotal + shipping + tax },
   ];
 
+  const wanted = new Map<string, number>(); // lines may repeat a variant: check stock against the sum
+  for (const l of req.line_items) wanted.set(l.item.id, (wanted.get(l.item.id) ?? 0) + l.quantity);
   const messages: Message[] = [
-    ...req.line_items.flatMap((l, i): Message[] => l.quantity > variants[i].stock ? [{
+    ...req.line_items.flatMap((l, i): Message[] => wanted.get(l.item.id)! > variants[i].stock ? [{
       type: "error", code: "out_of_stock", path: `$.line_items[${i}].quantity`, severity: "recoverable",
       content: `Only ${variants[i].stock} of ${variants[i].title} in stock`,
     }] : []),

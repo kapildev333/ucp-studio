@@ -48,6 +48,11 @@ describe("derive", () => {
     expect(d.status).toBe("incomplete");
     expect(d.fulfillment).toBeUndefined();
   });
+  it("sums quantities per variant for the stock check", () => {
+    const d = derive({ line_items: [{ item: { id: "a" }, quantity: 3 }, { item: { id: "a" }, quantity: 3 }, { item: { id: "b" }, quantity: 1 }] }, lookup);
+    expect(d.messages.filter((m) => m.code === "out_of_stock").map((m) => m.path)).toEqual(["$.line_items[0].quantity", "$.line_items[1].quantity"]);
+    expect(d.status).toBe("incomplete");
+  });
   it("asks for an option when a destination exists but none is selected", () => {
     const d = derive({ ...full(), buyer: { email: "x@y.z" } }, lookup);
     expect(d.messages.map((m) => m.path)).toEqual(["$.fulfillment.methods[0].groups[0].selected_option_id"]);

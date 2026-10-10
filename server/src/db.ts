@@ -3,6 +3,7 @@ import Database from "better-sqlite3";
 export type Db = Database.Database;
 
 // Checkout request state is stored as JSON; totals and messages are derived on read. `status` is the snapshot taken at the last write (Complete gates on it).
+// ponytail: no migrations (CREATE IF NOT EXISTS only); delete server/data.db after any schema change
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS products (
   id TEXT PRIMARY KEY, handle TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL,
