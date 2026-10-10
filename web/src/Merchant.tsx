@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { fulfillmentStatus, getCatalog, getOrders, importCatalog, money, resetCatalog, shipOrder, type J } from "./api";
 import { download, parseCatalogImport } from "./export";
 
-const counts = (r: J) => `${r.imported.products} products, ${r.imported.variants} variants`;
+const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
+const counts = (r: J) => `${plural(r.imported.products, "product")}, ${plural(r.imported.variants, "variant")}`;
 
 const totalOf = (o: J) => (Array.isArray(o.totals) ? o.totals : []).find((t: J) => t?.type === "total")?.amount;
 
@@ -53,6 +54,7 @@ export function Merchant() {
   const [replace, setReplace] = useState(false);
   const [importErrors, setImportErrors] = useState<string[]>([]);
   const [status, setStatus] = useState("");
+  const [importStatus, setImportStatus] = useState("");
   const [orders, setOrders] = useState<J[] | null>(null);
   const [orderError, setOrderError] = useState("");
   const [shipping, setShipping] = useState("");
@@ -108,10 +110,10 @@ export function Merchant() {
     e.preventDefault();
     setBusy(true);
     setImportErrors([]);
-    setStatus("");
+    setImportStatus("");
     try {
       const r = await importCatalog({ replace, products: parseCatalogImport(text) });
-      setStatus(`Imported ${counts(r)}`);
+      setImportStatus(`Imported ${counts(r)}`);
       await load();
     } catch (err) {
       // Server 400 content is "path: message; path: message"; ponytail: a message containing "; " itself splits too.
@@ -126,7 +128,7 @@ export function Merchant() {
     <section className="page">
       <h1>Merchant</h1>
       <p className="muted">Back-office for the built-in merchant only, not the URL typed in other tabs.</p>
-      <div className="row">
+      <div className="row toolbar">
         <h2 className="grow">Catalog</h2>
         <button onClick={load}>Refresh</button>
         <button disabled={!products} onClick={() => download("ucp-catalog.json", JSON.stringify({ products }, null, 2), "application/json")}>Download current catalog (.json)</button>
@@ -145,7 +147,7 @@ export function Merchant() {
       {products && products.length === 0 && <div className="empty">The catalog is empty. Import products or reset to the sample catalog.</div>}
       {products && products.length > 0 && (
         <>
-          <p className="muted small">{products.length} products, {variants} variants</p>
+          <p className="muted small">{plural(products.length, "product")}, {plural(variants, "variant")}</p>
           <table className="steps">
             <caption className="sr">Catalog variants</caption>
             <thead>
@@ -167,7 +169,7 @@ export function Merchant() {
       )}
 
       <div className="merchant-sec">
-        <div className="row">
+        <div className="row toolbar">
           <h2 className="grow">Orders</h2>
           <button onClick={loadOrders}>Refresh</button>
         </div>
@@ -197,6 +199,7 @@ export function Merchant() {
           </label>
           <button className="primary" disabled={busy || !text.trim()}>{busy ? "Working…" : "Import"}</button>
         </form>
+        <div role="status" aria-live="polite">{importStatus && <div className="banner ok">{importStatus}</div>}</div>
         {importErrors.length > 0 && (
           <div className="banner error" role="alert">
             {importErrors.length === 1 ? <span className="mono">{importErrors[0]}</span> : <ul>{importErrors.map((m, i) => <li key={i} className="mono">{m}</li>)}</ul>}

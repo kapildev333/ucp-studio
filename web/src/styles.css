@@ -17,11 +17,11 @@ code { background: var(--raised); padding: 1px 5px; border-radius: 4px; }
 
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-.topbar { display: flex; align-items: center; gap: 24px; height: 44px; padding: 0 16px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 2; }
-.brand { display: flex; align-items: center; gap: 8px; font-weight: 600; letter-spacing: .01em; }
+.topbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0 24px; min-height: 44px; padding: 0 16px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 2; }
+.brand { white-space: nowrap; display: flex; align-items: center; gap: 8px; font-weight: 600; letter-spacing: .01em; }
 .logo { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 5px; background: var(--accent); color: #0b0d12; font-size: 12px; font-weight: 800; }
-nav { display: flex; gap: 2px; flex: 1; height: 100%; }
-.tab { display: flex; align-items: center; padding: 0 12px; color: var(--muted); text-decoration: none; border-bottom: 2px solid transparent; }
+nav { display: flex; flex-wrap: wrap; gap: 2px; flex: 1 1 auto; min-width: 0; }
+.tab { display: flex; align-items: center; min-height: 44px; padding: 0 12px; color: var(--muted); text-decoration: none; border-bottom: 2px solid transparent; }
 .tab:hover { color: var(--text); } .tab.active { color: var(--text); border-bottom-color: var(--accent); }
 
 .page { padding: 20px 16px; } .narrow { max-width: 860px; margin: 0 auto; }
@@ -38,6 +38,7 @@ fieldset:disabled { opacity: 1; } fieldset:disabled > *:not(legend) { opacity: .
 label > span:not(.sr) { display: block; font-size: 11px; color: var(--muted); margin-bottom: 2px; }
 .row { display: flex; gap: 8px; align-items: flex-end; }
 .row > label span.sr + * { margin: 0; }
+.toolbar { flex-wrap: wrap; align-items: center; } .toolbar .grow { flex: 1 0 auto; min-width: min-content; }
 
 .empty { padding: 16px; text-align: center; color: var(--muted); border: 1px dashed var(--line-2); border-radius: 8px; margin: 8px 0; }
 .banner { padding: 8px 12px; border-radius: 6px; margin: 8px 0; border: 1px solid; font-size: 12px; display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; }
@@ -65,6 +66,7 @@ details.raw { margin-top: 14px; } summary { cursor: pointer; }
 pre { margin: 4px 0; padding: 10px 12px; background: #090b0f; border: 1px solid var(--line); border-radius: 6px; font: 12px/1.45 var(--mono); overflow: auto; max-height: 360px; white-space: pre-wrap; word-break: break-word; }
 
 .console { display: grid; grid-template-columns: minmax(420px, 1fr) minmax(380px, 1fr); height: calc(100vh - 45px); }
+.wizard, .trace { position: relative; } /* containing block for the absolutely positioned .sr elements, which would otherwise lay out against (and scroll) the page */
 .wizard { padding: 14px 16px 40px; overflow-y: auto; border-right: 1px solid var(--line); }
 .strip { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; }
 .state { font: 11px var(--mono); padding: 3px 8px; border-radius: 999px; color: var(--muted); border: 1px solid var(--line); }
