@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { AgentConsole } from "./AgentConsole";
+import { Conformance } from "./Conformance";
 import { Inspector } from "./Inspector";
 
 const TABS = [
   ["inspector", "Inspector"],
   ["console", "Agent Console"],
+  ["conformance", "Conformance"],
 ] as const;
-const fromHash = () => (location.hash === "#console" ? "console" : "inspector");
+const fromHash = () => TABS.find(([id]) => `#${id}` === location.hash)?.[0] ?? "inspector";
 
 export function App() {
   const [tab, setTab] = useState<string>(fromHash());
@@ -30,6 +32,7 @@ export function App() {
       <main>
         <div hidden={tab !== "inspector"}><Inspector /></div>
         <div hidden={tab !== "console"}><AgentConsole /></div>
+        <div hidden={tab !== "conformance"}><Conformance /></div>
       </main>
     </>
   );

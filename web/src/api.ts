@@ -69,3 +69,14 @@ export async function call(onTrace: (t: Trace) => void, method: "GET" | "POST" |
   onTrace({ id: ++seq, method, url, status: d.response.status, duration_ms: d.duration_ms, request: d.request, response: d.response });
   return d.response;
 }
+
+export async function runConformance(body: { url: string; transport: "rest" | "mcp"; allow_complete: boolean }): Promise<J> {
+  let res: Response;
+  try {
+    res = await post("/api/conformance", body);
+  } catch {
+    throw new Error("Cannot reach the Studio API. Is the server running on 127.0.0.1:4000?");
+  }
+  if (!res.ok) throw await errorOf(res, "Conformance");
+  return res.json();
+}

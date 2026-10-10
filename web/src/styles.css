@@ -100,3 +100,18 @@ pre { margin: 4px 0; padding: 10px 12px; background: #090b0f; border: 1px solid 
 .status.ok { color: var(--pass); background: #3ecf8e18; } .status.warn { color: var(--warn); background: #f5b94218; } .status.err { color: var(--fail); background: #ff6b6b18; }
 
 @media (max-width: 1000px) { .console { grid-template-columns: 1fr; height: auto; } .wizard { border-right: 0; } .checks li { grid-template-columns: 64px 1fr; } .detail { grid-column: 2; } }
+
+/* v3: trace export + conformance */
+.trace-head .actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.trace-copy { margin: 6px 0; }
+.badge.skip { color: var(--muted); background: var(--raised); border-color: var(--line-2); }
+.stat.skip b, .stat.skip span { color: var(--muted); }
+.summary.wrap { flex-wrap: wrap; }
+.steps { width: 100%; border-collapse: collapse; border: 1px solid var(--line); background: var(--panel); }
+.steps caption { text-align: left; padding: 6px 0; color: var(--muted); }
+.steps th, .steps td { text-align: left; vertical-align: top; padding: 8px 12px; border-top: 1px solid var(--line); }
+.steps th { font: 700 10px var(--mono); letter-spacing: .06em; color: var(--muted); }
+.steps td.detail { overflow-wrap: anywhere; }
+.steps details { margin-top: 6px; }
+.steps .trace { padding: 0; background: none; overflow: visible; }
+.notice { font-size: 12px; margin: 4px 0 10px; }
