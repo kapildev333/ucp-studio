@@ -117,14 +117,22 @@ export function restClient(origin: string, baseUrl: string, state: Ctx["state"])
       ...(opts.key && { "Idempotency-Key": opts.key }),
     };
     const t0 = performance.now();
-    const res = await fetch(url, { method, headers, body: opts.body === undefined ? undefined : JSON.stringify(opts.body), signal: AbortSignal.timeout(10000) });
-    const text = await res.text();
+    const request = { method, url, headers, body: opts.body };
+    let res: Response, text: string;
+    try {
+      res = await fetch(url, { method, headers, body: opts.body === undefined ? undefined : JSON.stringify(opts.body), signal: AbortSignal.timeout(10000) });
+      text = await res.text();
+    } catch (e: any) {
+      const msg = `${method} ${url}: ${e?.cause?.code ?? (e?.name === "TimeoutError" ? "timeout after 10s" : e?.message ?? e)}`;
+      state.exchanges.push({ request, response: { status: 0, headers: {}, body: msg }, duration_ms: Math.round(performance.now() - t0) });
+      throw new Error(msg);
+    }
     let body: any = text;
     try {
       body = JSON.parse(text);
     } catch {}
     state.exchanges.push({
-      request: { method, url, headers, body: opts.body },
+      request,
       response: { status: res.status, headers: Object.fromEntries(res.headers), body },
       duration_ms: Math.round(performance.now() - t0),
     });
@@ -136,7 +144,7 @@ export function restClient(origin: string, baseUrl: string, state: Ctx["state"])
   };
   const co = (id?: string, sub = "") => `${ep()}/checkout-sessions${id ? `/${encodeURIComponent(id)}` : ""}${sub}`;
   return {
-    profile: () => call("GET", `${origin}/.well-known/ucp`, { noAgent: true }),
+    profile: () => call("GET", `${origin}/.well-known/ucp`),
     search: (body, o) => call("POST", `${ep()}/catalog/search`, { body, noAgent: o?.noAgent }),
     create: (body, key) => call("POST", co(), { body, key }),
     get: (id, o) => call("GET", co(id), { noAgent: o?.noAgent }),

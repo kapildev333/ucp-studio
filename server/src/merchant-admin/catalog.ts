@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
+import { protocolError } from "../ucp.js";
 import { seedCatalog, type Db } from "../db.js";
 
 const variant = z.object({
@@ -13,11 +14,17 @@ const product = z.object({
   categories: z.array(z.string()).default([]), variants: z.array(variant).min(1).max(50),
 });
 const importBody = z.object({ replace: z.boolean().default(false), products: z.array(product).min(1).max(500) }).superRefine((b, ctx) => {
-  const seen = new Set<string>();
-  b.products.forEach((p, i) => p.variants.forEach((v, j) => {
+  const seen = new Set<string>(), pids = new Set<string>(), vids = new Set<string>();
+  b.products.forEach((p, i) => {
+    if (p.id && pids.has(p.id)) ctx.addIssue({ code: "custom", path: ["products", i, "id"], message: "duplicate id" });
+    if (p.id) pids.add(p.id);
+    p.variants.forEach((v, j) => {
+    if (v.id && vids.has(v.id)) ctx.addIssue({ code: "custom", path: ["products", i, "variants", j, "id"], message: "duplicate id" });
+    if (v.id) vids.add(v.id);
     if (seen.has(v.sku)) ctx.addIssue({ code: "custom", path: ["products", i, "variants", j, "sku"], message: "duplicate sku" });
     seen.add(v.sku);
-  }));
+    });
+  });
 });
 
 const slug = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -25,6 +32,10 @@ const slug = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(
 // ponytail: no auth, localhost demo only; add real auth before exposing this beyond the developer's machine
 export const merchantAdminRouter = (db: Db) => {
   const r = Router();
+
+  // ponytail: header-based CSRF check only (browsers always send Sec-Fetch-Site); real auth is out of scope
+  r.use((req, res, next) =>
+    req.method !== "GET" && req.header("Sec-Fetch-Site") === "cross-site" ? protocolError(res, 403, "forbidden", "Cross-site requests are not allowed") : next());
 
   r.get("/catalog", (_req, res) => {
     const variants = db.prepare("SELECT * FROM variants ORDER BY id").all() as any[];

@@ -121,6 +121,31 @@ describe("catalog reset", () => {
   });
 });
 
+describe("catalog hardening", () => {
+  it("rejects cross-site writes, allows same-site", async () => {
+    const app = mk();
+    await imp(app, { replace: true, products: [prod()] });
+    const before = await catalog(app);
+    const bad = await request(app).post("/merchant-admin/catalog/reset").set("Sec-Fetch-Site", "cross-site");
+    expect(bad.status).toBe(403);
+    expect(bad.body.code).toBe("forbidden");
+    expect(await catalog(app)).toEqual(before);
+    expect((await request(app).post("/merchant-admin/catalog/reset").set("Sec-Fetch-Site", "same-site")).status).toBe(200);
+  });
+  it("rejects duplicate product ids and duplicate variant ids", async () => {
+    const app = mk();
+    const before = await catalog(app);
+    const dp = await imp(app, { products: [prod("A", [v("S1")], { id: "dup" }), prod("B", [v("S2")], { id: "dup" })] });
+    expect(dp.status).toBe(400);
+    expect(dp.body.code).toBe("invalid_request");
+    expect(dp.body.content).toContain("products.1.id");
+    const dv = await imp(app, { products: [prod("A", [v("S1", { id: "vd" })]), prod("B", [v("S2", { id: "vd" })])] });
+    expect(dv.status).toBe(400);
+    expect(dv.body.content).toContain("products.1.variants.0.id");
+    expect(await catalog(app)).toEqual(before);
+  });
+});
+
 describe("imported products in UCP", () => {
   const buy = { line_items: [{ item: { id: "var_mug" }, quantity: 2 }] };
   const ship = { street_address: "1 Main St", address_locality: "X", address_region: "CA", postal_code: "94000", address_country: "US" };

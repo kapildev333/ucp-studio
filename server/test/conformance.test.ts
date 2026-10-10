@@ -118,12 +118,22 @@ describe("conformance over REST", () => {
   });
 
   it("unreachable target: 200, profile fails, everything else skips", async () => {
-    const res = await run({ url: "http://127.0.0.1:1" });
+    // port 1 is blocked by fetch itself ("bad port"), so use a just-closed ephemeral port for a real ECONNREFUSED
+    const dead = await listen(() => {});
+    await new Promise((r) => dead.server.close(r));
+    const res = await run({ url: dead.base });
     expect(res.status).toBe(200);
     const st = statuses(res.body);
     expect(st.profile).toBe("fail");
     for (const id of ids.slice(1)) expect(st[id]).toBe("skip");
     expect(res.body.summary).toEqual({ pass: 0, fail: 1, warn: 0, skip: 13 });
+    const prof = res.body.steps.find((s: any) => s.id === "profile");
+    expect(prof.detail).toContain(`GET ${dead.base}/.well-known/ucp`);
+    expect(prof.detail).toContain("ECONNREFUSED");
+    expect(prof.exchanges).toHaveLength(1);
+    expect(prof.exchanges[0].response.status).toBe(0);
+    expect(prof.exchanges[0].response.body).toBe(prof.detail);
+    expect(prof.exchanges[0].request.headers["UCP-Agent"]).toContain("/api/agent-profile");
   });
 });
 
