@@ -19,7 +19,7 @@ export function App() {
     addEventListener("hashchange", on);
     return () => removeEventListener("hashchange", on);
   }, []);
-  // Both panes stay mounted (hidden) so switching tabs keeps their state.
+  // All panes stay mounted (hidden) so switching tabs keeps their state.
   return (
     <>
       <header className="topbar">

@@ -64,7 +64,8 @@ export function Conformance() {
       </form>
       {error && <div className="banner error" role="alert">{error}</div>}
       {!result && !error && !busy && <div className="empty">Enter a merchant URL and press Run to start the conformance suite.</div>}
-      <div role="status" aria-live="polite">
+      <span className="sr" role="status">{result ? `Run finished: ${KINDS.map((k) => `${result.summary[k]} ${k}`).join(", ")}` : ""}</span>
+      <div>
         {result && (
           <>
             <div className="summary wrap" aria-label="Summary">

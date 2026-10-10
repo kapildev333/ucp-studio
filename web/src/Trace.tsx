@@ -20,7 +20,7 @@ export function TraceEntry({ t }: { t: T }) {
       setCopied(m);
       setTimeout(() => setCopied("Copy as curl"), 1500);
     };
-    navigator.clipboard.writeText(toCurl(t)).then(() => flash("Copied"), () => flash("Copy failed"));
+    (navigator.clipboard?.writeText(toCurl(t)) ?? Promise.reject()).then(() => flash("Copied"), () => flash("Copy failed"));
   };
   return (
     <li>

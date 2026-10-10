@@ -112,7 +112,7 @@ pre { margin: 4px 0; padding: 10px 12px; background: #090b0f; border: 1px solid 
 .steps th, .steps td { text-align: left; vertical-align: top; padding: 8px 12px; border-top: 1px solid var(--line); }
 .steps th { font: 700 10px var(--mono); letter-spacing: .06em; color: var(--muted); }
 .steps td.detail { overflow-wrap: anywhere; }
-.steps details { margin-top: 6px; }
+.steps td > details { margin-top: 6px; }
 .steps .trace { padding: 0; background: none; overflow: visible; }
 .notice { font-size: 12px; margin: 4px 0 10px; }
 input[type=checkbox] { width: auto; min-height: 0; padding: 0; accent-color: var(--accent); }
@@ -125,3 +125,4 @@ textarea { font: 12px/1.45 var(--mono); color: var(--text); background: var(--ra
 .banner ul { margin: 0; padding-left: 18px; }
 .merchant-sec { margin-top: 24px; }
 .merchant-sec form > * + * { margin-top: 8px; }
+.steps .badge { white-space: nowrap; }

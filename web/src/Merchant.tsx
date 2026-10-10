@@ -23,7 +23,13 @@ export function Merchant() {
       setLoadError((e as Error).message);
     }
   }
-  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    void load();
+    // Panes mount at page load; refresh on arriving so stock changed in the Agent Console is not stale.
+    const on = () => { if (location.hash === "#merchant") void load(); };
+    addEventListener("hashchange", on);
+    return () => removeEventListener("hashchange", on);
+  }, []);
 
   async function reset() {
     setBusy(true);
@@ -72,7 +78,7 @@ export function Merchant() {
         <div className="banner warn" role="group" aria-label="Confirm reset">
           <span>Reset the catalog to the sample products? Orders and checkouts are kept.</span>
           <button className="danger" disabled={busy} onClick={reset}>Confirm reset</button>
-          <button disabled={busy} onClick={() => setConfirming(false)}>Cancel</button>
+          <button autoFocus disabled={busy} onClick={() => setConfirming(false)}>Cancel</button>
         </div>
       )}
       {resetError && <div className="banner error" role="alert">{resetError}</div>}
@@ -107,7 +113,12 @@ export function Merchant() {
         <form onSubmit={doImport}>
           <label>
             <span className="muted small">Catalog JSON file</span>
-            <input type="file" accept=".json,application/json" onChange={async (e) => { const f = e.target.files?.[0]; if (f) setText(await f.text()); }} />
+            <input type="file" accept=".json,application/json" onChange={async (e) => {
+              const input = e.target, f = input.files?.[0];
+              if (!f) return;
+              try { setText(await f.text()); setImportErrors([]); } catch (err) { setImportErrors([(err as Error).message]); }
+              input.value = ""; // so re-picking the same (edited) file fires change again
+            }} />
           </label>
           <label>
             <span className="muted small">Catalog JSON</span>

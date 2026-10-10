@@ -66,7 +66,7 @@ export function download(filename: string, content: string, type: string): void 
   a.href = url;
   a.download = filename;
   a.click();
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url));
 }
 
 // Accepts { products: [...] } or a bare array; any `replace` key is ignored (the checkbox decides). Field validation is the server's job.

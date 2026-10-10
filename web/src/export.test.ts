@@ -16,6 +16,12 @@ describe("toCurl", () => {
     const c = toCurl(tr({ request: { method: "POST", url: "https://m.test/c", headers: { A: "1", B: "2" }, body: { a: 1 } } }));
     expect(c).toBe("curl -X POST 'https://m.test/c' \\\n  -H 'A: 1' \\\n  -H 'B: 2' \\\n  --data-raw '{\"a\":1}'");
   });
+  it("POST with null body emits no --data-raw", () => {
+    expect(toCurl(tr({ request: { method: "POST", url: "https://m.test/c", body: null } }))).not.toContain("--data-raw");
+  });
+  it("GET with a body emits no --data-raw", () => {
+    expect(toCurl(tr({ request: { method: "GET", url: "https://m.test/a", body: { a: 1 } } }))).not.toContain("--data-raw");
+  });
   it("escapes single quotes in url, header and body", () => {
     const c = toCurl(tr({ request: { method: "POST", url: "https://m.test/it's", headers: { X: "a'b" }, body: "it's" } }));
     expect(c).toContain("'https://m.test/it'\\''s'");
