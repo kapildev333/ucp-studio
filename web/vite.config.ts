@@ -1,12 +1,12 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-const target = "http://127.0.0.1:4000";
+const target = process.env.UCP_SERVER ?? "http://127.0.0.1:4000";
 export default defineConfig({
   plugins: [react()],
   server: {
-    port: 5173,
+    port: Number(process.env.WEB_PORT ?? 5173),
     host: "127.0.0.1",
-    proxy: Object.fromEntries(["/api", "/ucp", "/.well-known", "/orders"].map((p) => [p, target])),
+    proxy: Object.fromEntries(["/api", "/ucp", "/.well-known", "/orders", "/merchant-admin", "/track"].map((p) => [p, target])),
   },
 });
